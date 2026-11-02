@@ -1,0 +1,587 @@
+// Choronai database (PostgreSQL). Generated from the migrations; paste into https://dbdiagram.io
+// Money = riel as bigint. Quantities / weights = decimal(12,3).
+
+Project choronai {
+  database_type: 'PostgreSQL'
+  Note: 'Choronai meat and fish shop: POS, stock per warehouse, sales, members.'
+}
+
+Table user_groups {
+  id uuid [pk]
+  name varchar(255) [unique, not null]
+  description varchar(255) [not null, default: '']
+  permissions json
+  is_owner boolean [not null, default: false]
+  created_at timestamp
+  updated_at timestamp
+  Note: 'permissions = JSON list such as ["products.view","sales.pos"]. is_owner = every permission.'
+}
+
+Table users {
+  id uuid [pk]
+  first_name varchar(255) [not null]
+  last_name varchar(255) [not null, default: '']
+  username varchar(255) [unique, not null]
+  email varchar(255)
+  password varchar(255) [not null]
+  group_id uuid [not null]
+  status varchar(255) [not null, default: 'active']
+  phone varchar(255) [not null, default: '']
+  gender varchar(255) [not null, default: '']
+  remember_token varchar(100)
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table personal_access_tokens {
+  id bigint [pk, increment]
+  tokenable_type varchar(255) [not null]
+  tokenable_id uuid [not null]
+  name text [not null]
+  token varchar(64) [unique, not null]
+  abilities text
+  last_used_at timestamp
+  expires_at timestamp
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table audit_logs {
+  id bigint [pk, increment]
+  user_id uuid
+  action varchar(255) [not null]
+  entity varchar(255) [not null]
+  entity_id varchar(255)
+  before json
+  after json
+  created_at timestamp [not null, default: `now()`]
+  Note: 'Who changed what: deletes, edits, price warnings, PIN checks, register closes.'
+}
+
+Table customers {
+  id uuid [pk]
+  code varchar(255) [unique, not null]
+  company varchar(255) [not null, default: '']
+  name varchar(255) [not null]
+  phone varchar(255) [not null, default: '']
+  email varchar(255) [not null, default: '']
+  customer_group varchar(255) [not null, default: 'General']
+  price_group varchar(255) [not null, default: 'Default']
+  address varchar(255) [not null, default: '']
+  award_points int [not null, default: 0]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table member_cards {
+  id uuid [pk]
+  card_no varchar(255) [unique, not null]
+  customer_id uuid
+  award_points int [not null, default: 0]
+  spent bigint [not null, default: 0]
+  expiry date
+  created_by varchar(255) [not null, default: '']
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table suppliers {
+  id uuid [pk]
+  company varchar(255) [not null, default: '']
+  name varchar(255) [not null]
+  phone varchar(255) [not null, default: '']
+  email varchar(255) [not null, default: '']
+  city varchar(255) [not null, default: '']
+  country varchar(255) [not null, default: '']
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table products {
+  id uuid [pk]
+  sku varchar(255) [unique, not null]
+  plu_code varchar(255) [unique, note: 'item number on the label scale']
+  name varchar(255) [not null]
+  type varchar(255) [not null, default: 'standard']
+  category varchar(255) [not null, default: 'Other']
+  sub_category varchar(255) [not null, default: '']
+  brand varchar(255) [not null, default: '']
+  unit varchar(255) [not null, default: 'kg']
+  sale_unit varchar(255) [not null, default: '']
+  purchase_unit varchar(255) [not null, default: '']
+  price bigint [not null, default: 0]
+  cost bigint [not null, default: 0]
+  additional bigint [not null, default: 0]
+  alert_quantity decimal(12,3) [not null, default: 0]
+  promo_price bigint
+  promo_start date
+  promo_end date
+  image varchar(255) [not null, default: '']
+  gallery json
+  custom_fields json
+  details text
+  invoice_details text
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+  Note: 'Money in riel (bigint). Stock is not stored here: see stock_levels.'
+}
+
+Table combo_items {
+  id bigint [pk, increment]
+  combo_id uuid [not null]
+  product_id uuid [not null]
+  quantity decimal(12,3) [not null]
+  price bigint [not null, default: 0]
+}
+
+Table product_suppliers {
+  id bigint [pk, increment]
+  product_id uuid [not null]
+  supplier varchar(255) [not null]
+  part_number varchar(255) [not null, default: '']
+  price bigint [not null, default: 0]
+}
+
+Table price_changes {
+  id uuid [pk]
+  product_id uuid [not null]
+  name varchar(255) [not null]
+  old_price bigint [not null]
+  new_price bigint [not null]
+  actor varchar(255) [not null]
+  at timestamp [not null]
+}
+
+Table product_rewards {
+  id uuid [pk]
+  code varchar(255) [unique, not null]
+  name varchar(255) [not null]
+  type varchar(255) [not null, default: 'standard']
+  points int [not null, default: 0]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table branches {
+  id uuid [pk]
+  name varchar(255) [unique, not null]
+  name_km varchar(255) [not null, default: '']
+  vat varchar(255) [not null, default: '']
+  phone varchar(255) [not null, default: '']
+  email varchar(255) [not null, default: '']
+  city varchar(255) [not null, default: '']
+  country varchar(255) [not null, default: '']
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table warehouses {
+  id uuid [pk]
+  code varchar(255) [unique, not null]
+  name varchar(255) [not null]
+  type varchar(255) [not null, default: 'branch']
+  branch_id uuid
+  price_group varchar(255) [not null, default: 'Default']
+  phone varchar(255) [not null, default: '']
+  email varchar(255) [not null, default: '']
+  address varchar(255) [not null, default: '']
+  created_at timestamp
+  updated_at timestamp
+  Note: 'type: main (one) or branch (one per branch, branch_id set).'
+}
+
+Table stock_levels {
+  id bigint [pk, increment]
+  product_id uuid [not null]
+  warehouse_id uuid [not null]
+  quantity decimal(12,3) [not null, default: 0]
+  indexes {
+    (product_id, warehouse_id) [unique]
+  }
+  Note: 'Current stock of one product in one warehouse. Changed only together with stock_movements.'
+}
+
+Table stock_movements {
+  id bigint [pk, increment]
+  product_id uuid [not null]
+  warehouse_id uuid [not null]
+  quantity decimal(12,3) [not null, note: '+ in / - out']
+  reason varchar(255) [not null, note: 'sale, sale_return, receive, issue_out, issue_in, adjustment']
+  document_type varchar(255) [not null]
+  document_id uuid [not null]
+  expiry date
+  created_by uuid
+  created_at timestamp [not null, default: `now()`]
+  Note: 'Stock ledger: one row per change (+ in, - out). document_type + document_id point to stock_documents, sales or sale_returns.'
+}
+
+Table stock_documents {
+  id uuid [pk]
+  kind varchar(255) [not null]
+  reference varchar(255) [unique, not null]
+  date timestamp [not null]
+  warehouse_id uuid [not null]
+  to_warehouse_id uuid
+  supplier varchar(255) [not null, default: '']
+  status varchar(255) [not null, default: 'completed']
+  total bigint [not null, default: 0]
+  note text
+  attachment varchar(255) [not null, default: '']
+  created_by uuid
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+  Note: 'kind: receive | issue | adjustment. Issue moves stock from warehouse_id to to_warehouse_id.'
+}
+
+Table stock_document_lines {
+  id bigint [pk, increment]
+  document_id uuid [not null]
+  product_id uuid [not null]
+  code varchar(255) [not null, default: '']
+  name varchar(255) [not null]
+  unit varchar(255) [not null, default: '']
+  quantity decimal(12,3) [not null]
+  price bigint [not null, default: 0]
+  type varchar(255) [note: 'adjustments: addition / subtraction']
+  description varchar(255) [not null, default: '']
+  expiry date
+}
+
+Table devices {
+  id uuid [pk]
+  name varchar(255) [not null]
+  warehouse_id uuid [not null]
+  reference_prefix varchar(255) [unique, not null]
+  last_sync_at timestamp
+  created_at timestamp
+  updated_at timestamp
+  Note: 'One POS computer. reference_prefix goes into offline references (SALE/A1/2026/0001).'
+}
+
+Table registers {
+  id uuid [pk]
+  user_id uuid [not null]
+  warehouse_id uuid [not null]
+  status varchar(255) [not null, default: 'open']
+  opened_at timestamp [not null]
+  closed_at timestamp
+  cash_in_hand bigint [not null, default: 0]
+  open_note text
+  counted_riel bigint [not null, default: 0]
+  counted_usd decimal(12,2) [not null, default: 0]
+  counted_total bigint [not null, default: 0]
+  card_slips int [not null, default: 0]
+  expected_cash bigint [not null, default: 0]
+  difference bigint [not null, default: 0]
+  total_sales bigint [not null, default: 0]
+  invoices int [not null, default: 0]
+  note text
+  created_at timestamp
+  updated_at timestamp
+  Note: 'One cashier shift. expected_cash and difference are calculated by the server on close.'
+}
+
+Table sales {
+  id uuid [pk]
+  reference varchar(255) [unique, not null]
+  date timestamp [not null]
+  warehouse_id uuid [not null]
+  customer_id uuid
+  total bigint [not null, default: 0]
+  order_tax bigint [not null, default: 0]
+  discount bigint [not null, default: 0]
+  shipping bigint [not null, default: 0]
+  grand_total bigint [not null, default: 0]
+  paid bigint [not null, default: 0]
+  payment_status varchar(255) [not null, default: 'paid']
+  status varchar(255) [not null, default: 'completed']
+  note text
+  created_by uuid
+  member_card_id uuid
+  register_id uuid
+  device_id uuid
+  returned bigint [not null, default: 0]
+  payment_method varchar(255) [not null, default: 'Cash']
+  needs_review boolean [not null, default: false]
+  review_reason varchar(255) [not null, default: '']
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+  Note: 'POS sale. needs_review = offline sale that went below zero stock or changed price.'
+}
+
+Table sale_lines {
+  id bigint [pk, increment]
+  document_id uuid [not null]
+  product_id uuid [not null]
+  code varchar(255) [not null, default: '']
+  name varchar(255) [not null]
+  unit varchar(255) [not null, default: '']
+  quantity decimal(12,3) [not null]
+  price bigint [not null, note: 'copied at sale time']
+}
+
+Table payments {
+  id bigint [pk, increment]
+  sale_id uuid [not null]
+  method varchar(255) [not null, note: 'Cash, ABA / KHQR, Card, Bank transfer']
+  amount bigint [not null]
+  tendered_riel bigint [not null, default: 0]
+  tendered_usd decimal(12,2) [not null, default: 0]
+  rate decimal(14,4) [not null, default: 0]
+  paid_at timestamp [not null]
+  created_by uuid
+}
+
+Table sale_returns {
+  id uuid [pk]
+  reference varchar(255) [unique, not null]
+  date timestamp [not null]
+  warehouse_id uuid [not null]
+  customer_id uuid
+  total bigint [not null, default: 0]
+  order_tax bigint [not null, default: 0]
+  discount bigint [not null, default: 0]
+  shipping bigint [not null, default: 0]
+  grand_total bigint [not null, default: 0]
+  paid bigint [not null, default: 0]
+  payment_status varchar(255) [not null, default: 'paid']
+  status varchar(255) [not null, default: 'completed']
+  note text
+  created_by uuid
+  sale_id uuid
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+}
+
+Table sale_return_lines {
+  id bigint [pk, increment]
+  document_id uuid [not null]
+  product_id uuid [not null]
+  code varchar(255) [not null, default: '']
+  name varchar(255) [not null]
+  unit varchar(255) [not null, default: '']
+  quantity decimal(12,3) [not null]
+  price bigint [not null]
+}
+
+Table suspended_sales {
+  id uuid [pk]
+  warehouse_id uuid [not null]
+  customer_id uuid
+  note varchar(255) [not null, default: '']
+  items json [not null]
+  adjustments json
+  total bigint [not null, default: 0]
+  created_by uuid
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table settings {
+  scope varchar(255) [pk]
+  values json [not null]
+  created_at timestamp
+  updated_at timestamp
+  Note: 'scope = system | pos. values = JSON with the frontend setting keys. POS PIN stored only as a salted hash.'
+}
+
+Table reference_counters {
+  id bigint [pk, increment]
+  prefix varchar(255) [not null]
+  period varchar(255) [not null]
+  last_number int [not null, default: 0]
+  indexes {
+    (prefix, period) [unique]
+  }
+  Note: 'Next document number per prefix and period (year / month).'
+}
+
+Table categories {
+  id uuid [pk]
+  code varchar(255) [unique, not null]
+  name varchar(255) [not null]
+  parent varchar(255) [not null, default: '']
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table units {
+  id uuid [pk]
+  code varchar(255) [unique, not null]
+  name varchar(255) [not null]
+  base_unit varchar(255) [not null, default: '']
+  operator varchar(255) [not null, default: '']
+  value varchar(255) [not null, default: '']
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table brands {
+  id uuid [pk]
+  code varchar(255) [not null, default: '']
+  name varchar(255) [unique, not null]
+  slug varchar(255) [not null, default: '']
+  description text
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table customer_groups {
+  id uuid [pk]
+  name varchar(255) [unique, not null]
+  percentage decimal(6,2) [not null, default: 0]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table price_groups {
+  id uuid [pk]
+  name varchar(255) [unique, not null]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table payment_terms {
+  id uuid [pk]
+  description varchar(255) [unique, not null]
+  due_days int [not null, default: 0]
+  due_day_discount int [not null, default: 0]
+  discount varchar(255) [not null, default: '']
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table currencies {
+  id uuid [pk]
+  code varchar(255) [unique, not null]
+  name varchar(255) [not null]
+  rate decimal(14,4) [not null, default: 1]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table tax_rates {
+  id uuid [pk]
+  name varchar(255) [unique, not null]
+  code varchar(255) [not null, default: '']
+  rate decimal(8,2) [not null, default: 0]
+  type varchar(255) [not null, default: 'Percentage']
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table printers {
+  id uuid [pk]
+  title varchar(255) [not null]
+  type varchar(255) [not null, default: 'network']
+  profile varchar(255) [not null, default: '']
+  path varchar(255) [not null, default: '']
+  ip varchar(255) [not null, default: '']
+  port varchar(255) [not null, default: '']
+  created_at timestamp
+  updated_at timestamp
+}
+
+// Foreign keys
+Ref: combo_items.combo_id > products.id
+Ref: combo_items.product_id > products.id
+Ref: devices.warehouse_id > warehouses.id
+Ref: member_cards.customer_id > customers.id
+Ref: payments.created_by > users.id
+Ref: payments.sale_id > sales.id
+Ref: price_changes.product_id > products.id
+Ref: product_suppliers.product_id > products.id
+Ref: registers.user_id > users.id
+Ref: registers.warehouse_id > warehouses.id
+Ref: sale_lines.document_id > sales.id
+Ref: sale_lines.product_id > products.id
+Ref: sale_return_lines.document_id > sale_returns.id
+Ref: sale_return_lines.product_id > products.id
+Ref: sale_returns.created_by > users.id
+Ref: sale_returns.customer_id > customers.id
+Ref: sale_returns.sale_id > sales.id
+Ref: sale_returns.warehouse_id > warehouses.id
+Ref: sales.created_by > users.id
+Ref: sales.customer_id > customers.id
+Ref: sales.device_id > devices.id
+Ref: sales.member_card_id > member_cards.id
+Ref: sales.register_id > registers.id
+Ref: sales.warehouse_id > warehouses.id
+Ref: stock_document_lines.document_id > stock_documents.id
+Ref: stock_document_lines.product_id > products.id
+Ref: stock_documents.created_by > users.id
+Ref: stock_documents.to_warehouse_id > warehouses.id
+Ref: stock_documents.warehouse_id > warehouses.id
+Ref: stock_levels.product_id > products.id
+Ref: stock_levels.warehouse_id > warehouses.id
+Ref: stock_movements.product_id > products.id
+Ref: stock_movements.warehouse_id > warehouses.id
+Ref: suspended_sales.created_by > users.id
+Ref: suspended_sales.customer_id > customers.id
+Ref: suspended_sales.warehouse_id > warehouses.id
+Ref: users.group_id > user_groups.id
+Ref: warehouses.branch_id > branches.id
+
+// Links without a database foreign key
+Ref: stock_movements.created_by > users.id
+Ref: audit_logs.user_id > users.id
+// personal_access_tokens.tokenable_id points to users.id (Laravel Sanctum, polymorphic)
+
+TableGroup people_and_access [note: 'Users, groups and permissions'] {
+  user_groups
+  users
+  personal_access_tokens
+  audit_logs
+}
+
+TableGroup customers [note: 'Customers and member cards'] {
+  customers
+  member_cards
+  suppliers
+}
+
+TableGroup catalogue [note: 'Products'] {
+  products
+  combo_items
+  product_suppliers
+  price_changes
+  product_rewards
+}
+
+TableGroup stock [note: 'Warehouses and stock ledger'] {
+  branches
+  warehouses
+  stock_levels
+  stock_movements
+  stock_documents
+  stock_document_lines
+}
+
+TableGroup pos_and_sales [note: 'POS, registers and sales'] {
+  devices
+  registers
+  sales
+  sale_lines
+  payments
+  sale_returns
+  sale_return_lines
+  suspended_sales
+}
+
+TableGroup settings [note: 'Settings and lookups'] {
+  settings
+  reference_counters
+  categories
+  units
+  brands
+  customer_groups
+  price_groups
+  payment_terms
+  currencies
+  tax_rates
+  printers
+}

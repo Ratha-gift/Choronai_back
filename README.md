@@ -5,6 +5,8 @@ Built with **Laravel 12 + PostgreSQL 16 + Eloquent**, and runs in **Docker**.
 
 The frontend (Next.js) is a separate project. Why things are built this way is explained in [docs/backend-plan.md](docs/backend-plan.md).
 
+**Database diagram:** [docs/database.dbml](docs/database.dbml). Open [dbdiagram.io](https://dbdiagram.io/d), paste the file in, and it draws every table and link. When you add or change a migration, update this file too.
+
 ---
 
 ## 1. What you need
