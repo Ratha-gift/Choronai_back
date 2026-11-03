@@ -5,6 +5,7 @@ use App\Http\Controllers\CrudController;
 use App\Http\Controllers\PosController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\RegisterController;
+use App\Http\Controllers\RewardController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\SaleReturnController;
 use App\Http\Controllers\SettingsController;
@@ -23,12 +24,17 @@ use Illuminate\Support\Facades\Route;
 Route::post('auth/login', [AuthController::class, 'login']);
 
 Route::middleware(['auth:sanctum', 'active'])->group(function () {
+    Route::get('frontend/workspace', [\App\Http\Controllers\FrontendWorkspaceController::class, 'show']);
+    Route::post('frontend/workspace', [\App\Http\Controllers\FrontendWorkspaceController::class, 'commit']);
     Route::get('auth/me', [AuthController::class, 'me']);
     Route::post('auth/logout', [AuthController::class, 'logout']);
     Route::post('auth/change-password', [AuthController::class, 'changePassword']);
 
     // People
+    Route::get('member-cards/{card}/history', [RewardController::class, 'history'])->middleware('perm:memberCards.view');
+    Route::post('member-cards/{card}/redeem', [RewardController::class, 'redeem'])->middleware('perm:memberCards.redeem');
     Route::get('users', [UserController::class, 'index'])->middleware('perm:users.view');
+    Route::get('users/{user}/registers', [UserController::class, 'registers'])->middleware('perm:users.view');
     Route::get('users/{user}', [UserController::class, 'show'])->middleware('perm:users.view');
     Route::post('users', [UserController::class, 'store'])->middleware('perm:users.add');
     Route::patch('users/{user}', [UserController::class, 'update'])->middleware('perm:users.edit');
@@ -66,6 +72,8 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::get('products/{product}/movements', [ProductController::class, 'movements'])->middleware('perm:stock.view,products.view');
 
     // Stock Management
+    Route::post('stock/adjustments/{id}/approve', [StockDocumentController::class, 'approve'])->middleware('perm:stock.approve');
+    Route::post('stock/issues/{id}/receive', [StockDocumentController::class, 'receiveTransfer'])->middleware('perm:stock.receive');
     Route::get('stock/levels', [StockLevelController::class, 'index'])->middleware('perm:stock.view,products.view');
     foreach (['receives' => ['receive', 'stock.receive'], 'issues' => ['issue', 'stock.issue'], 'adjustments' => ['adjustment', 'stock.add']] as $path => [$kind, $create]) {
         Route::prefix("stock/{$path}")->controller(StockDocumentController::class)->group(function () use ($kind, $create) {

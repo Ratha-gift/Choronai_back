@@ -27,6 +27,14 @@ class SaleService
     public function create(array $data, Register $register, bool $offline = false): Sale
     {
         return DB::transaction(function () use ($data, $register, $offline) {
+            $register = Register::whereKey($register->id)->lockForUpdate()->firstOrFail();
+            abort_unless($register->user_id === auth()->id(), 403, 'This register belongs to another cashier.');
+            if (isset($data['id']) && ($existing = Sale::withTrashed()->find($data['id']))) {
+                abort_unless($existing->register_id === $register->id, 409, 'Sale ID is already in use.');
+
+                return $existing->load('lines', 'payments', 'warehouse', 'customer', 'creator', 'memberCard');
+            }
+            abort_unless($register->status === 'open', 409, 'Register is closed.');
             $date = isset($data['date']) ? Carbon::parse($data['date']) : now();
             $lines = $this->lines($data['items']);
             $total = (int) round(collect($lines)->sum(fn ($line) => $line['quantity'] * $line['price']));
@@ -41,8 +49,10 @@ class SaleService
             $paid = min($tendered, $grandTotal);
 
             $card = isset($data['member_card_no'])
-                ? MemberCard::where('card_no', $data['member_card_no'])->first()
+                ? MemberCard::where('card_no', $data['member_card_no'])->lockForUpdate()->first()
                 : null;
+            abort_if($card?->expiry && $card->expiry->endOfDay()->isPast(), 422, 'Member card has expired.');
+            abort_if($card && isset($data['customer_id']) && $data['customer_id'] !== $card->customer_id, 422, 'Card belongs to a different customer.');
             $customerId = $data['customer_id'] ?? $card?->customer_id;
 
             $reference = $data['reference'] ?? null;
@@ -103,7 +113,7 @@ class SaleService
                 Audit::log('price_or_stock_warning', 'sale', $sale->id, null, ['reasons' => $reasons]);
             }
 
-            $this->awardPoints($grandTotal, $customerId, $card);
+            app(RewardService::class)->earn($sale);
 
             return $sale->load('lines', 'payments', 'warehouse', 'customer', 'creator', 'memberCard');
         });
@@ -112,17 +122,33 @@ class SaleService
     public function createReturn(array $data, string $warehouseId): SaleReturn
     {
         return DB::transaction(function () use ($data, $warehouseId) {
+            $register = Register::where('user_id', auth()->id())->where('status', 'open')->lockForUpdate()->first();
+            abort_unless($register, 409, 'Open a register before issuing a refund.');
+            abort_unless($register->warehouse_id === $warehouseId, 422, 'Refund warehouse must match the open register.');
             $date = isset($data['date']) ? Carbon::parse($data['date']) : now();
             $lines = $this->lines($data['items']);
             $total = (int) round(collect($lines)->sum(fn ($line) => $line['quantity'] * $line['price']));
-            $sale = isset($data['sale_id']) ? Sale::findOrFail($data['sale_id']) : null;
+            $sale = Sale::whereKey($data['sale_id'])->lockForUpdate()->firstOrFail();
+            $sold = $sale->lines->groupBy('product_id');
+            foreach ($lines as $line) {
+                $original = $sold->get($line['product_id']);
+                $returned = DB::table('sale_return_lines as lines')
+                    ->join('sale_returns as returns', 'returns.id', '=', 'lines.document_id')
+                    ->where('returns.sale_id', $sale->id)->where('lines.product_id', $line['product_id'])->sum('lines.quantity');
+                abort_unless($original && round($returned + $line['quantity'], 3) <= round($original->sum('quantity'), 3), 422, 'Returned quantity exceeds the original sale.');
+                abort_if($line['price'] > $original->min('price'), 422, 'Refund unit price exceeds the original sale price.');
+            }
+            abort_if($total > max(0, $sale->paid - $sale->returned), 422, 'Refund exceeds the remaining amount paid.');
 
             $return = SaleReturn::create([
                 'reference' => References::next('return_sale_prefix', $date),
                 'date' => $date,
                 'warehouse_id' => $warehouseId,
-                'customer_id' => $data['customer_id'] ?? $sale?->customer_id,
-                'sale_id' => $sale?->id,
+                'customer_id' => $sale->customer_id,
+                'sale_id' => $sale->id,
+                'register_id' => $register->id,
+                'refund_method' => $data['refund_method'] ?? 'Cash',
+                'restock' => $data['restock'] ?? true,
                 'total' => $total,
                 'grand_total' => $total,
                 'paid' => $total,
@@ -131,11 +157,15 @@ class SaleService
             ]);
             $return->lines()->createMany($lines);
             $sale?->increment('returned', $total);
+            app(RewardService::class)->reverseReturn($sale->refresh(), $return->id, $total);
 
-            $this->stock->apply('sale_return', $return->id, 'sale_return', $warehouseId, array_map(
+            if ($data['restock'] ?? true) {
+                $this->stock->apply('sale_return', $return->id, 'sale_return', $warehouseId, array_map(
                 fn ($line) => ['product_id' => $line['product_id'], 'quantity' => $line['quantity']],
                 $lines,
-            ));
+                ));
+            }
+            Audit::log('refund', 'sale_return', $return->id, null, ['sale_id' => $sale->id, 'register_id' => $register->id, 'amount' => $total]);
 
             return $return->load('lines', 'warehouse', 'customer', 'creator');
         });
@@ -144,12 +174,7 @@ class SaleService
     /** Deleting a sale puts its stock back and takes back its points. */
     public function delete(Sale $sale): void
     {
-        DB::transaction(function () use ($sale) {
-            $this->stock->reverse('sale', $sale->id);
-            $this->awardPoints(-$sale->grand_total, $sale->customer_id, $sale->memberCard);
-            Audit::log('delete', 'sale', $sale->id, $sale->toApi());
-            $sale->delete();
-        });
+        abort(409, 'Posted sales are retained. Use a linked sale return to correct a sale.');
     }
 
     /** Copies name, code and unit from the product so old invoices never change. */

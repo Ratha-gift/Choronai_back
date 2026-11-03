@@ -1,5 +1,7 @@
 # Choronai API
 
+Local workflow extensions: see [Workflow API additions](docs/workflow-api.md) for adjustment approval, linked transfer receipts, searches and cashier activity. Apply the new migration before using these endpoints. The frontend connection remains pending.
+
 Backend for the Choronai meat and fish shop: POS, stock, sales, members.
 Built with **Laravel 12 + PostgreSQL 16 + Eloquent**, and runs in **Docker**.
 
