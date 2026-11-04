@@ -14,14 +14,6 @@ class RegisterController extends Controller
     public function index(Request $request)
     {
         $query = Register::with('user', 'warehouse');
-        $filters = $request->validate([
-            'status' => ['nullable', 'in:open,closed'],
-            'user_id' => ['nullable', 'uuid'],
-            'warehouse_id' => ['nullable', 'uuid'],
-        ]);
-        foreach (array_filter($filters) as $column => $value) {
-            $query->where($column, $value);
-        }
         // Cashiers without the Registers page only see their own shifts.
         if (! $request->user()->hasPermission('sales.registers')) {
             $query->where('user_id', $request->user()->id);
@@ -48,8 +40,6 @@ class RegisterController extends Controller
         ]);
 
         $register = DB::transaction(function () use ($request, $data) {
-            // Lock a row that exists even when this user has no shifts yet.
-            \App\Models\User::whereKey($request->user()->id)->lockForUpdate()->firstOrFail();
             // One open register per cashier.
             abort_if($this->openFor($request->user()->id, lock: true), 409, 'You already have an open register.');
 
@@ -87,7 +77,7 @@ class RegisterController extends Controller
 
         $summary = $this->registers->close($register, $data);
 
-        return ['register' => $register->refresh()->load('user', 'warehouse')->toApi(), 'summary' => $summary];
+        return ['register' => $register->load('user', 'warehouse')->toApi(), 'summary' => $summary];
     }
 
     public static function openFor(string $userId, bool $lock = false): ?Register

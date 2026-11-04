@@ -112,18 +112,13 @@ class PosController extends Controller
             'sales.*.id' => ['required', 'uuid'],
             'sales.*.date' => ['required', 'date'],
         ]);
-        return DB::transaction(function () use ($request, $data) {
-        // Serialize one cashier's sync and register openings, including UUID retries.
-        \App\Models\User::whereKey($request->user()->id)->lockForUpdate()->firstOrFail();
         $device = Device::findOrFail($data['device_id']);
         $user = $request->user();
         $result = ['registers' => [], 'sales' => []];
 
         foreach ($data['registers'] ?? [] as $row) {
             $register = Register::find($row['id']);
-            abort_if($register && ($register->user_id !== $user->id || $register->warehouse_id !== $device->warehouse_id), 403, 'Register belongs to another cashier or warehouse.');
             if (! $register) {
-                abort_if(RegisterController::openFor($user->id), 409, 'Close or synchronize the existing register before importing another shift.');
                 $register = Register::create([
                     'id' => $row['id'],
                     'user_id' => $user->id,
@@ -139,13 +134,12 @@ class PosController extends Controller
 
         foreach ($data['sales'] ?? [] as $row) {
             if ($existing = Sale::withTrashed()->find($row['id'])) {
-                abort_unless($existing->created_by === $user->id && $existing->register_id === $row['register_id'], 403, 'Sale belongs to another cashier or register.');
                 $result['sales'][] = ['id' => $existing->id, 'status' => 'duplicate', 'reference' => $existing->reference];
 
                 continue;
             }
             $register = Register::find($row['register_id']);
-            if (! $register || $register->user_id !== $user->id || $register->warehouse_id !== $device->warehouse_id) {
+            if (! $register || $register->user_id !== $user->id) {
                 $result['sales'][] = ['id' => $row['id'], 'status' => 'error', 'message' => 'Unknown register.'];
 
                 continue;
@@ -161,8 +155,7 @@ class PosController extends Controller
         // Close registers after their sales are in, so the summary is complete.
         foreach ($data['registers'] ?? [] as $row) {
             $register = Register::find($row['id']);
-            $failedSale = collect($result['sales'])->contains(fn ($entry) => $entry['status'] === 'error');
-            if (! $failedSale && ! empty($row['closed_at']) && $register->status === 'open') {
+            if (! empty($row['closed_at']) && $register->status === 'open') {
                 $this->registers->close($register, [...$row, 'counted_riel' => $row['counted_riel'] ?? 0]);
             }
         }
@@ -170,6 +163,5 @@ class PosController extends Controller
         DB::table('devices')->where('id', $device->id)->update(['last_sync_at' => now()]);
 
         return $result;
-        });
     }
 }

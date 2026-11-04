@@ -27,16 +27,14 @@ class SaleReturnController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'sale_id' => ['required', 'uuid', 'exists:sales,id'],
-            'refund_method' => ['sometimes', 'in:Cash,ABA / KHQR,Card,Bank transfer'],
-            'restock' => ['sometimes', 'boolean'],
+            'sale_id' => ['nullable', 'uuid', 'exists:sales,id'],
             'customer_id' => ['nullable', 'uuid', 'exists:customers,id'],
             'warehouse_id' => ['required', 'uuid', 'exists:warehouses,id'],
             'date' => ['nullable', 'date'],
             'note' => ['nullable', 'string'],
             'items' => ['required', 'array', 'min:1'],
-            'items.*.product_id' => ['required', 'uuid', 'distinct'],
-            'items.*.quantity' => ['required', 'numeric', 'min:0.001', 'decimal:0,3'],
+            'items.*.product_id' => ['required', 'uuid'],
+            'items.*.quantity' => ['required', 'numeric', 'gt:0'],
             'items.*.price' => ['required', 'integer', 'min:0'],
         ]);
 
@@ -45,6 +43,14 @@ class SaleReturnController extends Controller
 
     public function destroy(SaleReturn $saleReturn)
     {
-        abort(409, 'Posted refunds are retained for reconciliation.');
+        DB::transaction(function () use ($saleReturn) {
+            $this->stock->reverse('sale_return', $saleReturn->id);
+            if ($saleReturn->sale_id) {
+                DB::table('sales')->where('id', $saleReturn->sale_id)->decrement('returned', $saleReturn->grand_total);
+            }
+            $saleReturn->delete();
+        });
+
+        return response()->noContent();
     }
 }

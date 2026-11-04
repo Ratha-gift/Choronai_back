@@ -217,10 +217,6 @@ Table stock_movements {
 }
 
 Table stock_documents {
-  workflow varchar(255) [not null, default: 'legacy']
-  transfer_id uuid [ref: > stock_documents.id]
-  approved_by uuid [ref: > users.id]
-  approved_at timestamp
   id uuid [pk]
   kind varchar(255) [not null]
   reference varchar(255) [unique, not null]
@@ -236,7 +232,7 @@ Table stock_documents {
   created_at timestamp
   updated_at timestamp
   deleted_at timestamp
-  Note: 'kind: receive | issue | adjustment. Controlled issues deduct source at dispatch; linked receipts credit destination. Controlled adjustments move stock only after approval. Legacy stock effects are retained.'
+  Note: 'kind: receive | issue | adjustment. Issue moves stock from warehouse_id to to_warehouse_id.'
 }
 
 Table stock_document_lines {

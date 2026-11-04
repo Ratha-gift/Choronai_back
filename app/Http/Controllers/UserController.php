@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
-use App\Models\Register;
 use App\Models\UserGroup;
 use App\Support\Audit;
 use Illuminate\Http\Request;
@@ -13,29 +12,7 @@ class UserController extends Controller
 {
     public function index(Request $request)
     {
-        $request->validate(['register_status' => ['nullable', 'in:open,closed,none']]);
-        $query = User::query()->withExists([
-            'registers as has_open_register' => fn ($query) => $query->where('status', 'open'),
-            'registers as has_register',
-        ]);
-        match ($request->query('register_status')) {
-            'open' => $query->whereHas('registers', fn ($query) => $query->where('status', 'open')),
-            'closed' => $query->whereHas('registers')->whereDoesntHave('registers', fn ($query) => $query->where('status', 'open')),
-            'none' => $query->whereDoesntHave('registers'),
-            default => null,
-        };
-
-        return CrudController::paginate($request, $query, ['username', 'first_name', 'last_name', 'email'], fn (User $user) => [
-            ...$user->toApi(),
-            'register_status' => $user->has_open_register ? 'open' : ($user->has_register ? 'closed' : 'none'),
-            'has_open_register' => (bool) $user->has_open_register,
-        ]);
-    }
-
-    public function registers(Request $request, User $user)
-    {
-        return CrudController::paginate($request, Register::with('user', 'warehouse')->where('user_id', $user->id),
-            ['status'], fn (Register $register) => $register->toApi());
+        return CrudController::paginate($request, User::query(), ['username', 'first_name', 'last_name', 'email'], fn (User $user) => $user->toApi());
     }
 
     public function show(User $user)

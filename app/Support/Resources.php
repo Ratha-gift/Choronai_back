@@ -16,7 +16,7 @@ class Resources
         $settings = 'settings.edit';
 
         return [
-            'branches' => [Models\Branch::class, $settings, ['name', 'name_km', 'city'], [
+            'branches' => [Models\Branch::class, $settings, ['name', 'city'], [
                 'name' => 'required|string|max:120', 'name_km' => 'nullable|string', 'vat' => 'nullable|string',
                 'phone' => 'nullable|string', 'email' => 'nullable|email', 'city' => 'nullable|string', 'country' => 'nullable|string',
             ]],
@@ -53,7 +53,6 @@ class Resources
                 'path' => 'nullable|string', 'ip' => 'nullable|string', 'port' => 'nullable|string',
             ]],
             'product-rewards' => [Models\ProductReward::class, 'products.edit', ['code', 'name'], [
-                'product_id' => 'nullable|uuid|exists:products,id', 'quantity' => 'sometimes|numeric|min:0.001|decimal:0,3',
                 'code' => 'required|string', 'name' => 'required|string', 'type' => 'nullable|string', 'points' => 'required|integer|min:0',
             ]],
             'suppliers' => [Models\Supplier::class, 'suppliers.edit', ['company', 'name', 'phone'], [

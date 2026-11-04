@@ -18,7 +18,6 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [ConvertCase::class]);
-        $middleware->api(append: [\App\Http\Middleware\WorkspaceRevision::class]);
         $middleware->alias([
             'perm' => RequirePermission::class,
             'active' => ActiveUser::class,

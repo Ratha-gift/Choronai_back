@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Register extends Model
 {
-    protected $casts = ['opened_at' => 'datetime', 'closed_at' => 'datetime', 'counted_usd' => 'float', 'closing_summary' => 'array'];
+    protected $casts = ['opened_at' => 'datetime', 'closed_at' => 'datetime', 'counted_usd' => 'float'];
 
     public function user(): BelongsTo
     {
