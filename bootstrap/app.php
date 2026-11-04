@@ -18,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [ConvertCase::class]);
+        $middleware->redirectGuestsTo(fn (Request $request) => $request->is('api/*') ? null : '/');
         $middleware->alias([
             'perm' => RequirePermission::class,
             'active' => ActiveUser::class,
