@@ -6,6 +6,7 @@ use App\Support\Audit;
 use App\Support\Settings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class SettingsController extends Controller
 {
@@ -40,5 +41,21 @@ class SettingsController extends Controller
         Settings::put('system', ['logo' => Storage::url($path)]);
 
         return ['url' => Storage::url($path)];
+    }
+
+    public function image(Request $request)
+    {
+        abort_unless(
+            $request->user()->hasPermission('products.add')
+            || $request->user()->hasPermission('products.edit')
+            || $request->user()->hasPermission('settings.system')
+            || $request->user()->hasPermission('settings.edit'),
+            403,
+        );
+        $request->validate(['image' => 'required|image|mimes:jpeg,png,webp|max:5120']);
+        $file = $request->file('image');
+        $path = $file->storeAs('images', Str::uuid().'.'.$file->extension(), 's3');
+
+        return ['url' => Storage::disk('s3')->url($path)];
     }
 }

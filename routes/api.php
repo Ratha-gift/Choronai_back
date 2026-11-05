@@ -45,6 +45,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::get('settings/{scope}', [SettingsController::class, 'show']);
     Route::put('settings/{scope}', [SettingsController::class, 'update']);
     Route::post('settings/logo', [SettingsController::class, 'logo']);
+    Route::post('images', [SettingsController::class, 'image']);
 
     // Simple lists: branches, warehouses, customers, currencies, ... (App\Support\Resources).
     // Reading only needs a signed-in user; CrudController checks the permission to change.
