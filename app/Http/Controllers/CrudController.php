@@ -19,6 +19,29 @@ class CrudController extends Controller
     {
         [$model, , $search] = Resources::find($resource);
 
+        if ($resource === 'member-cards') {
+            $query = $model::with('customer');
+            $term = trim((string) $request->query('search', ''));
+            if ($term !== '') {
+                $digits = preg_replace('/[^0-9]/', '', $term);
+                $query->where(function (Builder $where) use ($term, $digits) {
+                    $where->whereRaw('LOWER(card_no) LIKE ?', ['%'.mb_strtolower($term).'%'])
+                        ->orWhereHas('customer', function (Builder $customer) use ($term, $digits) {
+                            $customer->where('phone', 'like', '%'.$term.'%');
+                            if ($digits !== '') {
+                                $customer->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', ''), '(', ''), ')', '') LIKE ?", ['%'.$digits.'%']);
+                            }
+                        });
+                });
+            }
+
+            // Search is already applied across the card and its linked customer.
+            $paging = clone $request;
+            $paging->query->remove('search');
+
+            return $this->paginate($paging, $query);
+        }
+
         return $this->paginate($request, $model::query(), $search);
     }
 
@@ -33,7 +56,12 @@ class CrudController extends Controller
     {
         [$model, $permission, , $rules] = Resources::find($resource);
         $this->authorizePermission($request, $permission, 'add');
-        $data = $request->validate($this->rules($rules, $model));
+        $table = (new $model)->getTable();
+        $data = $this->blankStrings($request->validate([
+            // The browser's row id, so later edits from the frontend find the row.
+            'id' => ['sometimes', 'uuid', Rule::unique($table, 'id')],
+            ...$this->rules($rules, $model),
+        ]), $rules);
 
         if ($model === Customer::class && empty($data['code'])) {
             $data['code'] = $this->nextCustomerCode();
@@ -47,7 +75,7 @@ class CrudController extends Controller
         [$model, $permission, , $rules] = Resources::find($resource);
         $this->authorizePermission($request, $permission, 'edit');
         $row = $model::findOrFail($id);
-        $data = $request->validate($this->rules($rules, $model, $id, partial: true));
+        $data = $this->blankStrings($request->validate($this->rules($rules, $model, $id, partial: true)), $rules);
         $before = $row->toArray();
         $row->update($data);
         Audit::log('update', $resource, $id, $before, $row->toArray());
@@ -81,6 +109,22 @@ class CrudController extends Controller
     }
 
     /** Unique columns get a unique rule that ignores the row being edited. */
+    /**
+     * Empty text arrives as null (Laravel converts "" to null), but text
+     * columns (string, email ...) are NOT NULL with a '' default: store ''.
+     */
+    private function blankStrings(array $data, array $rules): array
+    {
+        foreach ($data as $field => $value) {
+            $rule = $rules[$field] ?? '';
+            if ($value === null && ! preg_match('/date|uuid|numeric|integer|boolean|array|exists/', $rule)) {
+                $data[$field] = '';
+            }
+        }
+
+        return $data;
+    }
+
     private function rules(array $rules, string $model, ?string $id = null, bool $partial = false): array
     {
         $table = (new $model)->getTable();

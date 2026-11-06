@@ -1,5 +1,7 @@
 # Choronai API
 
+Local workflow extensions: see [Workflow API additions](docs/workflow-api.md) for adjustment approval, linked transfer receipts, searches and cashier activity. Apply the new migration before using these endpoints. The frontend connection remains pending.
+
 Backend for the Choronai meat and fish shop: POS, stock, sales, members.
 Built with **Laravel 12 + PostgreSQL 16 + Eloquent**, and runs in **Docker**.
 
@@ -88,10 +90,33 @@ Run `php artisan …` through `docker compose exec api …`, not straight on you
 | ---------- | ------------------------------ | --------------------------------------------------------- |
 | API        | `http://localhost:8000/api/v1` | `POST /auth/login`, then `Authorization: Bearer <token>`  |
 | PostgreSQL | `localhost:5432`               | database `choronai`, user `choronai`, password `choronai` |
+| Adminer    | <http://localhost:8080/?pgsql=db&username=choronai&db=choronai> | password `choronai` (the link already picks **PostgreSQL**) |
 
-You can open the database with DBeaver, TablePlus or pgAdmin using the details above.
+**Adminer** shows the database in the browser, like phpMyAdmin. It starts with `docker compose up -d` and only this computer can open it. You can also use DBeaver, TablePlus or pgAdmin with the PostgreSQL details.
 
 The frontend may call the API from `FRONTEND_URL` in `.env` (default `http://localhost:3000`, see `config/cors.php`).
+
+### Images (Cloudflare R2)
+
+Product photos, the shop logo, branch photos and user photos are stored in the R2 bucket `choronai-pos`, in the folders `products/`, `business-images/`, `business-branch-images/` and `user-profile/`. The database only keeps the path.
+
+To turn it on, fill these in your `.env` (never commit the keys):
+
+```env
+R2_ACCESS_KEY_ID=...        # Cloudflare → R2 → Manage API tokens → Create token (Object Read & Write, bucket choronai-pos)
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET=choronai-pos
+R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+R2_PUBLIC_URL=              # leave empty while the bucket's Public Access is Disabled
+```
+
+Then run `docker compose exec api php artisan config:clear`. With `R2_BUCKET` empty, images are saved in `storage/app/public` instead, so you can work without Cloudflare.
+
+| Endpoint | What |
+| --- | --- |
+| `POST /uploads/images` | multipart `image` (jpg, png, webp, gif, max 5 MB) + `folder`. Returns `{ "path": "products/….jpg", "url": "images/products/….jpg" }`. |
+| `GET /images/{path}` | Streams the image from R2 (no sign-in, cached for a year). |
+| `DELETE /uploads/images/{path}` | Removes an image. Replacing a product photo deletes the old one automatically. |
 
 ## 5. Troubleshooting
 

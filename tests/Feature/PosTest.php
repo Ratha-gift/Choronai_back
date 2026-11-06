@@ -78,14 +78,14 @@ class PosTest extends ApiTestCase
         $this->postJson('/api/v1/pos/verify-pin', ['pin' => '4321'])->assertJsonPath('ok', true);
     }
 
-    public function test_deleting_a_sale_returns_stock(): void
+    public function test_posted_sales_cannot_be_deleted(): void
     {
         $this->openRegister();
         $id = $this->sell('MEAT-001', 3)->json('id');
 
         $this->actingAsUser('admin021');
-        $this->deleteJson("/api/v1/sales/{$id}")->assertNoContent();
-        $this->assertSame(30.0, $this->stock('MEAT-001', 'CEN'));
+        $this->deleteJson("/api/v1/sales/{$id}")->assertStatus(409);
+        $this->assertSame(27.0, $this->stock('MEAT-001', 'CEN'));
     }
 
     public function test_offline_sync_is_idempotent_and_flags_negative_stock(): void

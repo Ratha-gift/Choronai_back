@@ -5,8 +5,8 @@ namespace App\Http\Controllers;
 use App\Models;
 use App\Services\FrontendWorkspace;
 use App\Support\Resources;
-use Illuminate\Http\Request;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
@@ -53,8 +53,9 @@ class FrontendWorkspaceController extends Controller
                 $name = Str::camel(str_replace('-', '_', $path));
                 $this->rows($request, $before, $changes, FrontendWorkspace::key($name), $path, array_keys($rules));
             }
+            $this->linkBranches($changes); // after branches and warehouses are saved
             $this->rows($request, $before, $changes, FrontendWorkspace::key('userGroups'), 'user-groups', ['name', 'description']);
-            $this->rows($request, $before, $changes, FrontendWorkspace::key('users'), 'users', ['first_name', 'last_name', 'username', 'email', 'phone', 'gender', 'group_id', 'status', 'password_hash']);
+            $this->rows($request, $before, $changes, FrontendWorkspace::key('users'), 'users', ['first_name', 'last_name', 'username', 'email', 'phone', 'gender', 'branch', 'group_id', 'status', 'password']);
             $productFields = ['sku', 'name', 'type', 'category', 'sub_category', 'brand', 'unit', 'sale_unit', 'purchase_unit', 'price', 'cost', 'additional', 'alert_quantity', 'promotion', 'image', 'gallery', 'custom_fields', 'details', 'invoice_details', 'combo_items', 'suppliers'];
             $this->rows($request, $before, $changes, 'choronai-next-catalog-v1', 'products', $productFields);
             $registerKey = FrontendWorkspace::key('registers');
@@ -72,40 +73,66 @@ class FrontendWorkspaceController extends Controller
                 foreach ($this->delta($before, $changes, FrontendWorkspace::key($name)) as [$old, $row]) {
                     if (! $row) {
                         $this->call($request, 'DELETE', "stock/{$path}/{$old['id']}");
+
                         continue;
                     }
                     if (! $old && ! empty($row['transfer_id'])) {
                         $this->call($request, 'POST', 'stock/issues/'.$row['transfer_id'].'/receive', $row);
+
                         continue;
                     }
                     $body = collect($row)->only(['id', 'date', 'reference', 'supplier', 'note', 'attachment', 'items'])->all();
                     $body['warehouse_id'] = $this->warehouse($row);
                     if ($path === 'issues') {
                         $body['to_warehouse_id'] = Models\Warehouse::where('name', $row['to_warehouse'] ?? '')->value('id');
+                        // Issues start pending; Accept below moves the stock.
+                        $body['status'] = 'pending';
                     }
-                    // The browser changes source status after receipt; Laravel already did that.
-                    if ($old && $path === 'issues' && $this->same($old, $row, array_keys($body))) {
-                        continue;
+                    if ($path === 'receives') {
+                        // Line types belong to adjustments only.
+                        $body['items'] = array_map(fn ($item) => collect($item)->except('type')->all(), $body['items'] ?? []);
                     }
-                    if (! $old || ! $this->same($old, $row, ['date', 'reference', 'supplier', 'note', 'attachment', 'items', 'warehouse'])) {
+                    $status = $row['status'] ?? '';
+                    $oldStatus = $old['status'] ?? 'pending';
+                    // Only pending documents can change; the browser also rewrites
+                    // statuses after a transfer receipt, which Laravel already did.
+                    $editable = ! $old || $oldStatus === 'pending' || $path === 'receives';
+                    if ($editable && (! $old || ! $this->same($old, $row, ['date', 'reference', 'supplier', 'note', 'attachment', 'items', 'warehouse', 'to_warehouse']))) {
                         $this->call($request, $old ? 'PUT' : 'POST', 'stock/'.$path.($old ? '/'.$row['id'] : ''), $body);
                     }
-                    if ($path === 'adjustments' && ($row['status'] ?? '') === 'approved' && ($old['status'] ?? '') !== 'approved') {
-                        $this->call($request, 'POST', 'stock/adjustments/'.$row['id'].'/approve');
+                    if ($path !== 'receives' && $oldStatus === 'pending' && $status !== 'pending') {
+                        $action = $status === 'rejected' ? 'reject' : ($path === 'adjustments' ? 'approve' : 'accept');
+                        if ($status === 'rejected' || in_array($status, ['approved', 'accepted', 'dispatched', 'completed'], true)) {
+                            $this->call($request, 'POST', "stock/{$path}/{$row['id']}/{$action}");
+                        }
                     }
                 }
             }
             foreach ($this->delta($before, $changes, FrontendWorkspace::key('sales')) as [$old, $row]) {
                 abort_unless($row, 409, 'Posted sales cannot be deleted.');
                 if ($old) {
-                    abort_unless($this->same($old, $row, ['items', 'paid', 'warehouse', 'customer', 'discount', 'shipping', 'order_tax', 'payment_method']), 409, 'Posted sales cannot be edited.');
+                    abort_unless($this->same($old, $row, ['items', 'warehouse', 'customer', 'discount', 'shipping', 'order_tax']), 409,
+                        'A posted sale cannot be changed. Use Return Sale instead.');
+                    // Payments added later (Sales → Add Payment).
+                    $known = collect($old['payments'] ?? [])->pluck('id')->map(fn ($id) => (string) $id)->all();
+                    foreach ($row['payments'] ?? [] as $payment) {
+                        if (! in_array((string) $payment['id'], $known, true) && (int) ($payment['amount'] ?? 0) > 0) {
+                            $this->call($request, 'POST', "sales/{$row['id']}/payments", [
+                                'method' => $payment['method'], 'amount' => (int) $payment['amount'], 'paid_at' => $payment['date'] ?? null,
+                            ]);
+                        }
+                    }
+
                     continue;
                 }
                 $this->call($request, 'POST', 'sales', [
                     ...collect($row)->only(['id', 'reference', 'date', 'items', 'order_tax', 'discount', 'shipping', 'note'])->all(),
                     'customer_id' => $row['customer_id'] ?? Models\Customer::where('name', $row['customer'] ?? '')->value('id'),
                     'member_card_no' => $row['member_card'] ?? null,
-                    'payment' => ['method' => $row['payment_method'] ?? 'Cash', 'tendered_riel' => $row['paid'] ?? 0],
+                    'payment' => ['method' => $row['payment_method'] ?? 'Cash', 'tendered_riel' => (int) ($row['paid'] ?? 0)],
+                    'payments' => collect($row['payments'] ?? [])->map(fn ($part) => [
+                        'method' => $part['method'], 'amount' => (int) $part['amount'],
+                    ])->all(),
                 ]);
             }
             foreach ($this->delta($before, $changes, FrontendWorkspace::key('saleReturns')) as [$old, $row]) {
@@ -128,7 +155,12 @@ class FrontendWorkspaceController extends Controller
             $this->rows($request, $before, $changes, FrontendWorkspace::key('suspendedSales'), 'suspended-sales', ['items', 'adjustments', 'total', 'note', 'warehouse_id', 'customer_id']);
             foreach ($this->delta($before, $changes, $registerKey) as [$old, $row]) {
                 if ($row && ($row['status'] ?? '') === 'closed' && ($old['status'] ?? '') !== 'closed') {
-                    $this->call($request, 'POST', 'registers/'.$row['id'].'/close', $row);
+                    // The browser counts riel and dollars together in counted_total (riel).
+                    $this->call($request, 'POST', 'registers/'.$row['id'].'/close', [
+                        'counted_riel' => (int) round($row['counted_total'] ?? 0), 'counted_usd' => 0,
+                        'card_slips' => (int) ($row['card_slips'] ?? 0), 'note' => $row['note'] ?? null,
+                        'closed_at' => $row['closed_at'] ?? null,
+                    ]);
                 }
             }
             foreach (['system', 'pos'] as $scope) {
@@ -153,6 +185,17 @@ class FrontendWorkspaceController extends Controller
         });
     }
 
+    /** A branch names its warehouse: point that warehouse at the branch. */
+    private function linkBranches(array $changes): void
+    {
+        foreach ($changes[FrontendWorkspace::key('branches')] ?? [] as $branch) {
+            $warehouse = Models\Warehouse::where('name', $branch['warehouse'] ?? '')->first();
+            if ($warehouse && $warehouse->branch_id !== $branch['id'] && Models\Branch::whereKey($branch['id'])->exists()) {
+                $warehouse->update(['branch_id' => $branch['id'], 'type' => 'branch']);
+            }
+        }
+    }
+
     private function delta(array $before, array $changes, string $key): array
     {
         if (! array_key_exists($key, $changes)) {
@@ -162,7 +205,7 @@ class FrontendWorkspaceController extends Controller
         $next = collect($changes[$key])->keyBy('id');
         $out = [];
         foreach ($old->keys()->merge($next->keys())->unique() as $id) {
-            if ($old->get($id) != $next->get($id)) {
+            if (! $this->equal($old->get($id), $next->get($id))) {
                 $out[] = [$old->get($id), $next->get($id)];
             }
         }
@@ -175,6 +218,7 @@ class FrontendWorkspaceController extends Controller
         foreach ($this->delta($before, $changes, $key) as [$old, $row]) {
             if (! $row) {
                 $this->call($request, 'DELETE', $path.'/'.$old['id']);
+
                 continue;
             }
             $normalized = $row;
@@ -203,12 +247,47 @@ class FrontendWorkspaceController extends Controller
     private function same(array $old, array $new, array $fields): bool
     {
         foreach ($fields as $field) {
-            if (($old[$field] ?? null) != ($new[$field] ?? null)) {
+            if (! $this->equal($old[$field] ?? null, $new[$field] ?? null)) {
                 return false;
             }
         }
 
         return true;
+    }
+
+    /**
+     * Compares a stored value with what the browser sent back. Requests turn
+     * "" into null and JSON turns 2.000 into 2, so both sides are normalised.
+     */
+    private function equal(mixed $a, mixed $b): bool
+    {
+        // Stored rows can hold models/collections: compare their JSON form.
+        $plain = fn ($value) => json_decode(json_encode($value), true);
+
+        return json_encode(self::normalize($plain($a))) === json_encode(self::normalize($plain($b)));
+    }
+
+    private static function normalize(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            $out = array_map(self::normalize(...), $value);
+            if (! array_is_list($out)) {
+                ksort($out);
+            }
+
+            return $out;
+        }
+        if ($value === '') {
+            return null;
+        }
+        if (is_numeric($value) && ! is_string($value)) {
+            return (float) $value;
+        }
+        if (is_string($value) && preg_match('/^-?\d+(\.\d+)?$/', $value)) {
+            return (float) $value;
+        }
+
+        return $value;
     }
 
     private function warehouse(array $row): ?string

@@ -2,9 +2,12 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CrudController;
+use App\Http\Controllers\FrontendWorkspaceController;
+use App\Http\Controllers\ImageController;
 use App\Http\Controllers\PosController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\RegisterController;
+use App\Http\Controllers\RewardController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\SaleReturnController;
 use App\Http\Controllers\SettingsController;
@@ -22,13 +25,22 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('auth/login', [AuthController::class, 'login']);
 
+// Images are public like any website image (random names). Upload needs a sign-in.
+Route::get('images/{path}', [ImageController::class, 'show'])->where('path', '.*')->name('images.show');
+
 Route::middleware(['auth:sanctum', 'active'])->group(function () {
+    // The Next.js frontend's collections (see FrontendWorkspaceController).
+    Route::get('frontend/workspace', [FrontendWorkspaceController::class, 'show']);
+    Route::post('frontend/workspace', [FrontendWorkspaceController::class, 'commit']);
     Route::get('auth/me', [AuthController::class, 'me']);
     Route::post('auth/logout', [AuthController::class, 'logout']);
     Route::post('auth/change-password', [AuthController::class, 'changePassword']);
 
     // People
+    Route::get('member-cards/{card}/history', [RewardController::class, 'history'])->middleware('perm:memberCards.view');
+    Route::post('member-cards/{card}/redeem', [RewardController::class, 'redeem'])->middleware('perm:memberCards.redeem');
     Route::get('users', [UserController::class, 'index'])->middleware('perm:users.view');
+    Route::get('users/{user}/registers', [UserController::class, 'registers'])->middleware('perm:users.view');
     Route::get('users/{user}', [UserController::class, 'show'])->middleware('perm:users.view');
     Route::post('users', [UserController::class, 'store'])->middleware('perm:users.add');
     Route::patch('users/{user}', [UserController::class, 'update'])->middleware('perm:users.edit');
@@ -45,6 +57,11 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::get('settings/{scope}', [SettingsController::class, 'show']);
     Route::put('settings/{scope}', [SettingsController::class, 'update']);
     Route::post('settings/logo', [SettingsController::class, 'logo']);
+
+    // Images (Cloudflare R2 when configured): products, business-images,
+    // business-branch-images, user-profile. ImageController checks the permission.
+    Route::post('uploads/images', [ImageController::class, 'store']);
+    Route::delete('uploads/images/{path}', [ImageController::class, 'destroy'])->where('path', '.*');
 
     // Simple lists: branches, warehouses, customers, currencies, ... (App\Support\Resources).
     // Reading only needs a signed-in user; CrudController checks the permission to change.
@@ -66,6 +83,11 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::get('products/{product}/movements', [ProductController::class, 'movements'])->middleware('perm:stock.view,products.view');
 
     // Stock Management
+    Route::post('stock/adjustments/{id}/approve', [StockDocumentController::class, 'approve'])->middleware('perm:stock.approve');
+    Route::post('stock/issues/{id}/receive', [StockDocumentController::class, 'receiveTransfer'])->middleware('perm:stock.receive');
+    Route::post('stock/issues/{id}/accept', [StockDocumentController::class, 'accept'])->middleware('perm:stock.approve');
+    Route::post('stock/issues/{id}/reject', [StockDocumentController::class, 'reject'])->defaults('kind', 'issue')->middleware('perm:stock.approve');
+    Route::post('stock/adjustments/{id}/reject', [StockDocumentController::class, 'reject'])->defaults('kind', 'adjustment')->middleware('perm:stock.approve');
     Route::get('stock/levels', [StockLevelController::class, 'index'])->middleware('perm:stock.view,products.view');
     foreach (['receives' => ['receive', 'stock.receive'], 'issues' => ['issue', 'stock.issue'], 'adjustments' => ['adjustment', 'stock.add']] as $path => [$kind, $create]) {
         Route::prefix("stock/{$path}")->controller(StockDocumentController::class)->group(function () use ($kind, $create) {
@@ -100,6 +122,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::get('sales/{sale}', [SaleController::class, 'show'])->middleware('perm:sales.view,sales.pos');
     Route::delete('sales/{sale}', [SaleController::class, 'destroy'])->middleware('perm:sales.delete,sales.cancel');
     Route::post('sales/{sale}/review', [SaleController::class, 'review'])->middleware('perm:sales.edit');
+    Route::post('sales/{sale}/payments', [SaleController::class, 'addPayment'])->middleware('perm:sales.payments');
     Route::get('sale-returns', [SaleReturnController::class, 'index'])->middleware('perm:sales.view,sales.returns');
     Route::get('sale-returns/{saleReturn}', [SaleReturnController::class, 'show'])->middleware('perm:sales.view,sales.returns');
     Route::post('sale-returns', [SaleReturnController::class, 'store'])->middleware('perm:sales.returns');

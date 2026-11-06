@@ -3,6 +3,7 @@
 use App\Http\Middleware\ActiveUser;
 use App\Http\Middleware\ConvertCase;
 use App\Http\Middleware\RequirePermission;
+use App\Http\Middleware\WorkspaceRevision;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -18,6 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [ConvertCase::class]);
+        $middleware->api(append: [WorkspaceRevision::class]);
         $middleware->redirectGuestsTo(fn (Request $request) => $request->is('api/*') ? null : '/');
         $middleware->alias([
             'perm' => RequirePermission::class,

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Laravel\Sanctum\HasApiTokens;
 
@@ -13,7 +14,7 @@ class User extends Authenticatable
 
     protected $guarded = [];
 
-    protected $hidden = ['password', 'remember_token'];
+    protected $hidden = ['password', 'remember_token', 'legacy_password_hash'];
 
     protected $casts = ['password' => 'hashed'];
 
@@ -22,6 +23,11 @@ class User extends Authenticatable
     public function group(): BelongsTo
     {
         return $this->belongsTo(UserGroup::class);
+    }
+
+    public function registers(): HasMany
+    {
+        return $this->hasMany(Register::class);
     }
 
     public function hasPermission(string $permission): bool
@@ -41,6 +47,7 @@ class User extends Authenticatable
             'email' => $this->email,
             'phone' => $this->phone,
             'gender' => $this->gender,
+            'branch' => $this->branch,
             'status' => $this->status,
             'group_id' => $this->group_id,
             'group' => $this->group?->description ?: $this->group?->name,

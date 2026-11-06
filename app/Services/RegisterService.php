@@ -6,6 +6,7 @@ use App\Models\Register;
 use App\Models\SaleReturn;
 use App\Support\Audit;
 use App\Support\Settings;
+use Illuminate\Support\Facades\DB;
 
 class RegisterService
 {
@@ -14,15 +15,20 @@ class RegisterService
     /** Same numbers as `summarize` in src/features/pos/register.ts. */
     public function summary(Register $register): array
     {
+        if ($register->status === 'closed' && $register->closing_summary) {
+            return $register->closing_summary;
+        }
         $sales = $register->sales()->get();
         $byMethod = [];
         foreach (self::METHODS as $method) {
             $byMethod[$method] = (int) $sales->where('payment_method', $method)->sum('paid');
         }
-        $refunds = (int) SaleReturn::where('created_by', $register->user_id)
+        $refundQuery = SaleReturn::where(fn ($query) => $query->where('register_id', $register->id)
+            ->orWhere(fn ($legacy) => $legacy->whereNull('register_id')->where('created_by', $register->user_id)
             ->where('date', '>=', $register->opened_at)
-            ->when($register->closed_at, fn ($query) => $query->where('date', '<=', $register->closed_at))
-            ->sum('grand_total');
+            ->when($register->closed_at, fn ($query) => $query->where('date', '<=', $register->closed_at))));
+        $refunds = (int) (clone $refundQuery)->sum('grand_total');
+        $cashRefunds = (int) $refundQuery->where('refund_method', 'Cash')->sum('paid');
 
         return [
             'by_method' => $byMethod,
@@ -30,7 +36,8 @@ class RegisterService
             'discounts' => (int) $sales->sum('discount'),
             'total_sales' => (int) $sales->sum('grand_total'),
             'refunds' => $refunds,
-            'expected_cash' => $register->cash_in_hand + $byMethod['Cash'] - $refunds,
+            'cash_refunds' => $cashRefunds,
+            'expected_cash' => $register->cash_in_hand + $byMethod['Cash'] - $cashRefunds,
             'invoices' => $sales->count(),
         ];
     }
@@ -38,6 +45,9 @@ class RegisterService
     /** Saves the counted cash; the expected cash is calculated here, not by the browser. */
     public function close(Register $register, array $data): array
     {
+        return DB::transaction(function () use ($register, $data) {
+        $register = Register::whereKey($register->id)->lockForUpdate()->firstOrFail();
+        abort_unless($register->status === 'open', 409, 'Register is already closed.');
         $summary = $this->summary($register);
         $counted = (int) $data['counted_riel'] + (int) round(($data['counted_usd'] ?? 0) * ($data['rate'] ?? Settings::usdRate()));
         $register->update([
@@ -52,9 +62,11 @@ class RegisterService
             'total_sales' => $summary['total_sales'],
             'invoices' => $summary['invoices'],
             'note' => $data['note'] ?? null,
+            'closing_summary' => $summary,
         ]);
         Audit::log('close', 'register', $register->id, null, $register->only(['expected_cash', 'counted_total', 'difference']));
 
         return $summary;
+        });
     }
 }

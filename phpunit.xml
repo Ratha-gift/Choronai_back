@@ -16,6 +16,9 @@
     </source>
     <php>
         <env name="APP_ENV" value="testing"/>
+        <!-- Tests never use the real Cloudflare R2 bucket. -->
+        <env name="R2_BUCKET" value=""/>
+        <env name="R2_ACCESS_KEY_ID" value=""/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>

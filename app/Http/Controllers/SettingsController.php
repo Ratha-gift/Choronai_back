@@ -3,9 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Support\Audit;
+use App\Support\Images;
 use App\Support\Settings;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 
 class SettingsController extends Controller
 {
@@ -36,9 +36,10 @@ class SettingsController extends Controller
     {
         abort_unless($request->user()->hasPermission('settings.system') || $request->user()->hasPermission('settings.edit'), 403);
         $request->validate(['logo' => 'required|image|max:2048']);
-        $path = $request->file('logo')->store('logos', 'public');
-        Settings::put('system', ['logo' => Storage::url($path)]);
+        // The logo goes to R2 (business-images/) when it is configured.
+        $path = Images::store($request->file('logo'), 'business-images');
+        Settings::put('system', ['logo' => Images::url($path)]);
 
-        return ['url' => Storage::url($path)];
+        return ['path' => $path, 'url' => Images::url($path)];
     }
 }

@@ -27,10 +27,14 @@ class FrontendWorkspace
         $groups = Models\UserGroup::all();
         foreach (Resources::all() as $path => [$model]) {
             $name = Str::camel(str_replace('-', '_', $path));
-            $data[self::key($name)] = $model::all()->map(function ($row) use ($path, $branches, $customers) {
+            $data[self::key($name)] = $model::all()->map(function ($row) use ($path, $branches, $customers, $warehouses) {
                 $out = $row->toArray();
                 if ($path === 'warehouses') {
                     $out['branch'] = $branches->get($row->branch_id)?->name ?? $branches->first()?->name ?? '';
+                }
+                if ($path === 'branches') {
+                    // One branch = one warehouse; the frontend keeps the link here.
+                    $out['warehouse'] = $warehouses->firstWhere('branch_id', $row->id)?->name ?? '';
                 }
                 if ($path === 'member-cards') {
                     $out['customer'] = $customers->get($row->customer_id)?->phone ?? '';
@@ -64,19 +68,34 @@ class FrontendWorkspace
             $query = $stock ? Models\StockDocument::where('kind', $type) : $type::query();
             if ($stock && ! $user->hasPermission('stock.view')) {
                 $data[self::key($name)] = [];
+
                 continue;
             }
             if (! $stock && ! $user->hasPermission('sales.view')) {
                 $query->where('created_by', $user->id);
             }
-            $data[self::key($name)] = $query->with('lines', 'warehouse', 'creator')->get()->map(function ($document) use ($branches, $warehouses, $stock) {
+            $with = $stock ? ['lines', 'warehouse', 'creator'] : ['lines', 'warehouse', 'creator', ...($type === Models\Sale::class ? ['payments'] : [])];
+            $data[self::key($name)] = $query->with($with)->get()->map(function ($document) use ($branches, $warehouses, $stock) {
                 $out = $document->toApi();
+                if ($document instanceof Models\Sale) {
+                    // The frontend's payment list (Sales → View / Add Payment).
+                    $out['payments'] = $document->payments->map(fn ($payment) => [
+                        'id' => (string) $payment->id, 'date' => $payment->paid_at, 'method' => $payment->method,
+                        'amount' => $payment->amount, 'reference' => $document->reference,
+                    ])->values()->all();
+                }
                 $warehouse = $warehouses->get($document->warehouse_id);
                 $out['branch'] = $branches->get($warehouse?->branch_id)?->name ?? $branches->first()?->name ?? '';
                 if ($stock) {
                     $destination = $warehouses->get($document->to_warehouse_id);
                     $out['to_branch'] = $branches->get($destination?->branch_id)?->name ?? '';
-                    $out['stock_applied'] = $document->kind !== 'adjustment' || $document->status === 'approved' || $document->workflow === 'legacy';
+                    $out['stock_applied'] = $document->workflow === 'legacy'
+                        || ! in_array($document->status, ['pending', 'rejected'], true);
+                    // The frontend calls a half-received transfer "partial".
+                    if ($document->status === 'partially_received') {
+                        $out['status'] = 'partial';
+                    }
+                    $out['to_warehouse'] = $destination?->name;
                 }
                 if ($document instanceof Models\SaleReturn) {
                     $out['reference_to'] = Models\Sale::withTrashed()->find($document->sale_id)?->reference;

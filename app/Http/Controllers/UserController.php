@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Models\Register;
 use App\Models\UserGroup;
 use App\Support\Audit;
 use Illuminate\Http\Request;
@@ -12,7 +13,29 @@ class UserController extends Controller
 {
     public function index(Request $request)
     {
-        return CrudController::paginate($request, User::query(), ['username', 'first_name', 'last_name', 'email'], fn (User $user) => $user->toApi());
+        $request->validate(['register_status' => ['nullable', 'in:open,closed,none']]);
+        $query = User::query()->withExists([
+            'registers as has_open_register' => fn ($query) => $query->where('status', 'open'),
+            'registers as has_register',
+        ]);
+        match ($request->query('register_status')) {
+            'open' => $query->whereHas('registers', fn ($query) => $query->where('status', 'open')),
+            'closed' => $query->whereHas('registers')->whereDoesntHave('registers', fn ($query) => $query->where('status', 'open')),
+            'none' => $query->whereDoesntHave('registers'),
+            default => null,
+        };
+
+        return CrudController::paginate($request, $query, ['username', 'first_name', 'last_name', 'email'], fn (User $user) => [
+            ...$user->toApi(),
+            'register_status' => $user->has_open_register ? 'open' : ($user->has_register ? 'closed' : 'none'),
+            'has_open_register' => (bool) $user->has_open_register,
+        ]);
+    }
+
+    public function registers(Request $request, User $user)
+    {
+        return CrudController::paginate($request, Register::with('user', 'warehouse')->where('user_id', $user->id),
+            ['status'], fn (Register $register) => $register->toApi());
     }
 
     public function show(User $user)
@@ -22,7 +45,11 @@ class UserController extends Controller
 
     public function store(Request $request)
     {
-        $data = $request->validate($this->rules() + ['password' => 'required|string|min:6']);
+        $data = $this->blanks($request->validate($this->rules() + [
+            // The browser's row id, so the frontend keeps pointing at this user.
+            'id' => ['sometimes', 'uuid', Rule::unique('users', 'id')],
+            'password' => 'required|string|min:6',
+        ]));
         $user = User::create($data);
 
         return response()->json($user->refresh()->toApi(), 201);
@@ -30,7 +57,7 @@ class UserController extends Controller
 
     public function update(Request $request, User $user)
     {
-        $data = $request->validate($this->rules($user->id) + ['password' => 'nullable|string|min:6']);
+        $data = $this->blanks($request->validate($this->rules($user->id) + ['password' => 'nullable|string|min:6']));
         if (empty($data['password'])) {
             unset($data['password']);
         }
@@ -56,6 +83,18 @@ class UserController extends Controller
         return response()->noContent();
     }
 
+    /** Empty text arrives as null; these columns are NOT NULL with a '' default. */
+    private function blanks(array $data): array
+    {
+        foreach (['last_name', 'phone', 'gender', 'branch'] as $field) {
+            if (array_key_exists($field, $data) && $data[$field] === null) {
+                $data[$field] = '';
+            }
+        }
+
+        return $data;
+    }
+
     private function rules(?string $id = null): array
     {
         return [
@@ -65,6 +104,7 @@ class UserController extends Controller
             'email' => ['nullable', 'email'],
             'phone' => ['nullable', 'string'],
             'gender' => ['nullable', 'string'],
+            'branch' => ['nullable', 'string'],
             'group_id' => [$id ? 'sometimes' : 'required', 'uuid', 'exists:user_groups,id'],
             'status' => ['sometimes', 'in:active,inactive'],
         ];
