@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Sale;
 use App\Models\User;
 use App\Models\UserGroup;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
 /**
@@ -299,5 +300,25 @@ class WorkspaceTest extends ApiTestCase
         $this->patchJson("/api/v1/products/{$beef->id}", ['name' => 'Beef'])->assertOk();
         $this->patchJson("/api/v1/products/{$beef->id}", ['price' => 1])->assertForbidden();
         $this->assertSame(32000, (int) $beef->refresh()->price);
+    }
+
+    public function test_user_edit_and_delete_from_the_browser(): void
+    {
+        $this->actingAsUser('admin021');
+        $cashier = User::where('username', 'cashier01')->first();
+
+        // Edit: new branch, no password typed (the password stays).
+        $this->commit('choronai-users-v1', fn ($rows) => collect($rows)
+            ->map(fn ($r) => $r['id'] === $cashier->id ? [...$r, 'branch' => 'Riverside', 'lastName' => 'Two'] : $r)->all());
+        $this->assertDatabaseHas('users', ['id' => $cashier->id, 'branch' => 'Riverside', 'last_name' => 'Two']);
+        $this->assertTrue(Hash::check('cashier123', $cashier->refresh()->password));
+
+        // Delete: the row is kept for old sales but leaves the list.
+        $result = $this->commit('choronai-users-v1', fn ($rows) => collect($rows)
+            ->reject(fn ($r) => $r['id'] === $cashier->id)->values()->all());
+        $this->assertNull(collect($result['data']['choronai-users-v1'])->firstWhere('id', $cashier->id));
+        $this->assertDatabaseHas('users', ['id' => $cashier->id, 'status' => 'inactive']);
+        $this->app['auth']->forgetGuards();
+        $this->postJson('/api/v1/auth/login', ['username' => 'cashier01', 'password' => 'cashier123'])->assertStatus(422);
     }
 }
