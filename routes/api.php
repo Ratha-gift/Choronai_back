@@ -35,6 +35,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::get('auth/me', [AuthController::class, 'me']);
     Route::post('auth/logout', [AuthController::class, 'logout']);
     Route::post('auth/change-password', [AuthController::class, 'changePassword']);
+    Route::get('audit/logins', [AuthController::class, 'loginHistory'])->middleware('perm:settings.system,users.view');
 
     // People
     Route::get('member-cards/{card}/history', [RewardController::class, 'history'])->middleware('perm:memberCards.view');

@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use App\Support\Settings;
+use Illuminate\Support\Carbon;
 
 class AuthTest extends ApiTestCase
 {
@@ -53,5 +55,37 @@ class AuthTest extends ApiTestCase
     {
         $this->postJson('/api/v1/auth/login', ['username' => 'ADMIN@example.com', 'password' => 'admin123'])
             ->assertOk()->assertJsonPath('user.username', 'admin021');
+    }
+
+    public function test_sign_in_length_depends_on_the_group(): void
+    {
+        $this->travelTo(now()->startOfMinute());
+        $at = fn (string $user, string $pass, bool $remember) => Carbon::parse(
+            $this->postJson('/api/v1/auth/login', ['username' => $user, 'password' => $pass, 'remember' => $remember])
+                ->assertOk()->json('expiresAt'))->diffInMinutes(now(), absolute: true);
+
+        // Defaults: managers 7 days, cashiers 8 hours; at most 12 h without "Keep me signed in".
+        $this->assertEqualsWithDelta(168 * 60, $at('admin021', 'admin123', true), 1);
+        $this->assertEqualsWithDelta(12 * 60, $at('admin021', 'admin123', false), 1);
+        $this->assertEqualsWithDelta(8 * 60, $at('cashier01', 'cashier123', true), 1);
+
+        // Changed in System Settings.
+        Settings::put('system', ['staff_session_hours' => 4]);
+        $this->assertEqualsWithDelta(4 * 60, $at('cashier01', 'cashier123', true), 1);
+    }
+
+    public function test_sign_in_history_records_success_failure_and_address(): void
+    {
+        $this->postJson('/api/v1/auth/login', ['username' => 'cashier01', 'password' => 'nope'], ['X-Client-IP' => '203.0.113.7'])->assertStatus(422);
+        $this->postJson('/api/v1/auth/login', ['username' => 'cashier01', 'password' => 'cashier123'], ['X-Client-IP' => '203.0.113.7'])->assertOk();
+
+        $this->actingAsUser('cashier01');
+        $this->getJson('/api/v1/audit/logins')->assertForbidden(); // a cashier cannot read it
+
+        $this->actingAsUser('admin021');
+        $rows = $this->getJson('/api/v1/audit/logins')->assertOk()->json();
+        $this->assertSame(['login', 'login_failed'], array_column(array_slice($rows, 0, 2), 'action'));
+        $this->assertSame('203.0.113.7', $rows[0]['ip']);
+        $this->assertSame('cashier01', $rows[1]['username']);
     }
 }

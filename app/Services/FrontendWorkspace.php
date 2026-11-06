@@ -44,7 +44,9 @@ class FrontendWorkspace
             })->all();
         }
         $data[self::key('userGroups')] = $groups->map->toArray()->all();
-        $data[self::key('users')] = Models\User::when(! $user->hasPermission('users.view'), fn ($q) => $q->whereKey($user->id))
+        // Deleted users stay in the table for old documents, but not in the list.
+        $data[self::key('users')] = Models\User::where('username', 'not like', '%#deleted#%')
+            ->when(! $user->hasPermission('users.view'), fn ($q) => $q->whereKey($user->id))
             ->get()->map->toApi()->all();
         $data[self::key('permissions')] = $groups->mapWithKeys(fn ($group) => [$group->id => array_fill_keys($group->permissions ?? [], true)])->all();
         $data['choronai-next-catalog-v1'] = Models\Product::with('stockLevels', 'comboItems', 'suppliers')->get()->map(function ($product) use ($warehouses, $branches, $user) {
