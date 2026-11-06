@@ -10,7 +10,7 @@ class StockTest extends ApiTestCase
         $this->actingAsUser('admin021');
     }
 
-    public function test_receive_adds_stock_and_editing_replaces_it(): void
+    public function test_posted_receive_adds_stock_and_is_immutable(): void
     {
         $beef = $this->product('MEAT-001');
         $body = fn ($quantity) => ['warehouseId' => $this->warehouse('MAIN')->id, 'items' => [['productId' => $beef->id, 'quantity' => $quantity, 'price' => 25000]]];
@@ -19,24 +19,36 @@ class StockTest extends ApiTestCase
             ->assertJsonPath('items.0.code', 'MEAT-001')->assertJsonPath('total', 500000)->json('id');
         $this->assertSame(90.0, $this->stock('MEAT-001', 'MAIN'));
 
-        $this->putJson("/api/v1/stock/receives/{$id}", $body(25))->assertOk();
-        $this->assertSame(95.0, $this->stock('MEAT-001', 'MAIN'));
+        $this->putJson("/api/v1/stock/receives/{$id}", $body(25))->assertStatus(409);
+        $this->assertSame(90.0, $this->stock('MEAT-001', 'MAIN'));
 
-        $this->deleteJson("/api/v1/stock/receives/{$id}")->assertNoContent();
-        $this->assertSame(70.0, $this->stock('MEAT-001', 'MAIN'));
+        $this->deleteJson("/api/v1/stock/receives/{$id}")->assertStatus(409);
+        $this->assertSame(90.0, $this->stock('MEAT-001', 'MAIN'));
     }
 
     public function test_issue_moves_stock_between_warehouses(): void
     {
         $pork = $this->product('MEAT-002');
-        $this->postJson('/api/v1/stock/issues', [
+        $id = $this->postJson('/api/v1/stock/issues', [
             'warehouseId' => $this->warehouse('MAIN')->id,
             'toWarehouseId' => $this->warehouse('CEN')->id,
             'items' => [['productId' => $pork->id, 'quantity' => 12.5]],
-        ])->assertCreated()->assertJsonPath('toWarehouse', 'Central branch');
+        ])->assertCreated()->assertJsonPath('toWarehouse', 'Central branch')->json('id');
 
         $this->assertSame(57.5, $this->stock('MEAT-002', 'MAIN'));
+        $this->assertSame(30.0, $this->stock('MEAT-002', 'CEN'));
+        $receipt = ['id' => (string) \Illuminate\Support\Str::uuid(), 'items' => [['productId' => $pork->id, 'quantity' => 5]]];
+        $this->postJson("/api/v1/stock/issues/{$id}/receive", $receipt)->assertCreated();
+        $this->postJson("/api/v1/stock/issues/{$id}/receive", $receipt)->assertOk();
+        $this->assertSame(35.0, $this->stock('MEAT-002', 'CEN'));
+        $this->getJson("/api/v1/stock/issues/{$id}")->assertJsonPath('status', 'partially_received');
+        $receipt['id'] = (string) \Illuminate\Support\Str::uuid();
+        $receipt['items'][0]['quantity'] = 8;
+        $this->postJson("/api/v1/stock/issues/{$id}/receive", $receipt)->assertStatus(422);
+        $receipt['items'][0]['quantity'] = 7.5;
+        $this->postJson("/api/v1/stock/issues/{$id}/receive", $receipt)->assertCreated();
         $this->assertSame(42.5, $this->stock('MEAT-002', 'CEN'));
+        $this->getJson("/api/v1/stock/issues/{$id}")->assertJsonPath('status', 'received');
     }
 
     public function test_issue_needs_a_different_destination(): void
@@ -51,11 +63,17 @@ class StockTest extends ApiTestCase
     public function test_adjustment_adds_and_subtracts(): void
     {
         $catfish = $this->product('FISH-001');
-        $this->postJson('/api/v1/stock/adjustments', [
+        $id = $this->postJson('/api/v1/stock/adjustments', [
             'warehouseId' => $this->warehouse('CEN')->id,
             'items' => [['productId' => $catfish->id, 'quantity' => 4, 'type' => 'subtraction', 'description' => 'Spoiled']],
-        ])->assertCreated()->assertJsonPath('items.0.description', 'Spoiled');
+        ])->assertCreated()->assertJsonPath('items.0.description', 'Spoiled')->json('id');
 
+        $this->assertSame(30.0, $this->stock('FISH-001', 'CEN'));
+        $this->actingAsUser('cashier01');
+        $this->postJson("/api/v1/stock/adjustments/{$id}/approve")->assertForbidden();
+        $this->actingAsUser('admin021');
+        $this->postJson("/api/v1/stock/adjustments/{$id}/approve")->assertOk();
+        $this->postJson("/api/v1/stock/adjustments/{$id}/approve")->assertOk();
         $this->assertSame(26.0, $this->stock('FISH-001', 'CEN'));
     }
 

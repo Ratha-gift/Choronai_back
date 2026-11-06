@@ -48,4 +48,10 @@ class AuthTest extends ApiTestCase
 
         $this->patchJson("/api/v1/users/{$admin->id}", ['status' => 'inactive'])->assertStatus(422);
     }
+
+    public function test_email_address_works_as_username(): void
+    {
+        $this->postJson('/api/v1/auth/login', ['username' => 'ADMIN@example.com', 'password' => 'admin123'])
+            ->assertOk()->assertJsonPath('user.username', 'admin021');
+    }
 }

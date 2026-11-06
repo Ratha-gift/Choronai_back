@@ -1,0 +1,19 @@
+# Choronai web server.
+# SITE_ADDRESS: ":80" while you only have the IP address, or your domain
+# (e.g. "pos.example.com") to get HTTPS automatically from Let's Encrypt.
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+	reverse_proxy front:3000
+}
+
+# Internal only (not published): the frontend server calls the API here.
+:8080 {
+	root * /app/public
+	rewrite * /index.php
+	reverse_proxy api:9000 {
+		transport fastcgi {
+			root /app/public
+			split .php
+		}
+	}
+}

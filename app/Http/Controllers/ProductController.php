@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\StockMovement;
 use App\Support\Audit;
+use App\Support\Images;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -28,10 +29,17 @@ class ProductController extends Controller
 
     public function store(Request $request)
     {
-        $data = $request->validate($this->rules());
+        $data = $request->validate([
+            // The browser's product id, so the frontend keeps pointing at it.
+            'id' => ['sometimes', 'uuid', Rule::unique('products', 'id')],
+            ...$this->rules(),
+        ]);
 
         $product = DB::transaction(function () use ($data) {
-            $product = Product::create($this->columns($data));
+            $product = Product::create([
+                ...(isset($data['id']) ? ['id' => $data['id']] : []),
+                ...$this->columns($data),
+            ]);
             $this->saveChildren($product, $data);
 
             return $product;
@@ -46,7 +54,13 @@ class ProductController extends Controller
         if (array_key_exists('cost', $data) && ! $request->user()->hasPermission('products.cost')) {
             unset($data['cost']);
         }
+        // Changing the price needs "Product Price" (Group Permissions).
+        if (array_key_exists('price', $data) && (int) $data['price'] !== (int) $product->price
+            && ! $request->user()->hasPermission('products.price')) {
+            abort(403, 'You do not have permission to change prices.');
+        }
 
+        $oldImages = Images::pathsIn([$product->image, ...($product->gallery ?? [])]);
         DB::transaction(function () use ($request, $product, $data) {
             $oldPrice = $product->price;
             $product->update($this->columns($data));
@@ -61,8 +75,14 @@ class ProductController extends Controller
                 ]);
             }
         });
+        // Photos taken off the product are removed from R2 (soft-deleted products keep theirs).
+        $product->refresh();
+        $kept = Images::pathsIn([$product->image, ...($product->gallery ?? [])]);
+        foreach (array_diff($oldImages, $kept) as $path) {
+            Images::delete($path);
+        }
 
-        return $product->refresh()->load('stockLevels', 'comboItems', 'suppliers')->toApi();
+        return $product->load('stockLevels', 'comboItems', 'suppliers')->toApi();
     }
 
     public function destroy(Product $product)
@@ -143,6 +163,12 @@ class ProductController extends Controller
     private function columns(array $data): array
     {
         $columns = collect($data)->except(['promotion', 'combo_items', 'suppliers'])->all();
+        // Empty text arrives as null; these columns are NOT NULL with a '' default.
+        foreach (['sub_category', 'brand', 'sale_unit', 'purchase_unit', 'image', 'details', 'invoice_details'] as $text) {
+            if (array_key_exists($text, $columns) && $columns[$text] === null) {
+                $columns[$text] = '';
+            }
+        }
         if (array_key_exists('promotion', $data)) {
             $columns['promo_price'] = $data['promotion']['price'] ?? null;
             $columns['promo_start'] = $data['promotion']['start'] ?? null;

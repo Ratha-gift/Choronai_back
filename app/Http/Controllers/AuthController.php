@@ -22,7 +22,18 @@ class AuthController extends Controller
             abort(429, 'Too many attempts. Try again in '.RateLimiter::availableIn($key).' seconds.');
         }
 
-        $user = User::whereRaw('LOWER(username) = ?', [mb_strtolower(trim($data['username']))])->first();
+        // Username, or the email address browsers often fill in.
+        $login = mb_strtolower(trim($data['username']));
+        $user = User::whereRaw('LOWER(username) = ?', [$login])->first()
+            ?? (str_contains($login, '@') ? User::whereRaw('LOWER(email) = ?', [$login])->first() : null);
+        // Users imported from the old frontend: check its SHA-256 hash once,
+        // then store the password the normal way (bcrypt).
+        if ($user && $user->legacy_password_hash && hash_equals(
+            $user->legacy_password_hash,
+            hash('sha256', 'choronai:'.mb_strtolower($user->username).':'.$data['password']),
+        )) {
+            $user->update(['password' => $data['password'], 'legacy_password_hash' => null]);
+        }
         if (! $user || ! Hash::check($data['password'], $user->password)) {
             RateLimiter::hit($key, 60);
             abort(422, 'Wrong username or password.');
