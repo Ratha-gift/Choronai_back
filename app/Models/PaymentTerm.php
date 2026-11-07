@@ -2,4 +2,7 @@
 
 namespace App\Models;
 
-class PaymentTerm extends Model {}
+class PaymentTerm extends Model
+{
+    use Concerns\Audited;
+}

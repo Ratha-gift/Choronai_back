@@ -78,6 +78,20 @@ class PosTest extends ApiTestCase
         $this->postJson('/api/v1/pos/verify-pin', ['pin' => '4321'])->assertJsonPath('ok', true);
     }
 
+    public function test_saving_pos_settings_with_an_empty_pin_keeps_the_pin(): void
+    {
+        $this->actingAsUser('admin021');
+        $this->putJson('/api/v1/settings/pos', ['pinCode' => '4321'])->assertOk();
+        // What the settings page sends: every field, the PIN field empty.
+        $this->putJson('/api/v1/settings/pos', ['pinCode' => '', 'displayProducts' => 40])
+            ->assertOk()->assertJsonPath('hasPin', true);
+        $this->putJson('/api/v1/settings/pos', ['pinCode' => null])->assertJsonPath('hasPin', true);
+        $this->postJson('/api/v1/pos/verify-pin', ['pin' => '4321'])->assertJsonPath('ok', true);
+
+        $this->putJson('/api/v1/settings/pos', ['removePin' => true])->assertJsonPath('hasPin', false);
+        $this->assertArrayNotHasKey('remove_pin', \App\Support\Settings::all('pos'));
+    }
+
     public function test_posted_sales_cannot_be_deleted(): void
     {
         $this->openRegister();

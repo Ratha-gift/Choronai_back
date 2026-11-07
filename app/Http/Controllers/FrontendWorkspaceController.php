@@ -53,7 +53,10 @@ class FrontendWorkspaceController extends Controller
                 $name = Str::camel(str_replace('-', '_', $path));
                 $this->rows($request, $before, $changes, FrontendWorkspace::key($name), $path, array_keys($rules));
             }
-            $this->linkBranches($changes); // after branches and warehouses are saved
+            // after branches and warehouses are saved; only for users who may edit them
+            if ($request->user()->hasPermission('settings.edit')) {
+                $this->linkBranches($changes);
+            }
             $this->rows($request, $before, $changes, FrontendWorkspace::key('userGroups'), 'user-groups', ['name', 'description']);
             $this->rows($request, $before, $changes, FrontendWorkspace::key('users'), 'users', ['first_name', 'last_name', 'username', 'email', 'phone', 'gender', 'branch', 'group_id', 'status', 'password']);
             $productFields = ['sku', 'name', 'type', 'category', 'sub_category', 'brand', 'unit', 'sale_unit', 'purchase_unit', 'price', 'cost', 'additional', 'alert_quantity', 'promotion', 'image', 'gallery', 'custom_fields', 'details', 'invoice_details', 'combo_items', 'suppliers'];

@@ -43,6 +43,7 @@ class StockDocumentController extends Controller
     public function store(Request $request, string $kind)
     {
         $data = $this->validated($request, $kind);
+        $request->user()->assertWarehouse($data['warehouse_id']);
         $document = DB::transaction(function () use ($kind, $data, $request) {
             $date = Carbon::parse($data['date'] ?? now());
             $document = StockDocument::create([
@@ -68,6 +69,8 @@ class StockDocumentController extends Controller
     {
         $document = $this->find($kind, $id);
         $data = $this->validated($request, $kind, $document->id);
+        $request->user()->assertWarehouse($document->warehouse_id);
+        $request->user()->assertWarehouse($data['warehouse_id']);
         DB::transaction(function () use ($document, $data, $kind) {
             $document = StockDocument::whereKey($document->id)->lockForUpdate()->firstOrFail();
             $this->assertEditable($document);
@@ -115,6 +118,7 @@ class StockDocumentController extends Controller
     {
         return DB::transaction(function () use ($request, $id) {
             $document = StockDocument::where('kind', 'adjustment')->whereKey($id)->lockForUpdate()->firstOrFail();
+            $request->user()->assertWarehouse($document->warehouse_id);
             abort_unless($document->workflow === 'controlled', 409, 'Legacy adjustments already affected stock.');
             if ($document->status === 'approved') {
                 return $document->toApi();
@@ -142,8 +146,9 @@ class StockDocumentController extends Controller
     /** Accept a pending Stock Issue: the goods leave the sending warehouse now. */
     public function accept(Request $request, string $id)
     {
-        return DB::transaction(function () use ($id) {
+        return DB::transaction(function () use ($request, $id) {
             $document = StockDocument::where('kind', 'issue')->whereKey($id)->lockForUpdate()->firstOrFail();
+            $request->user()->assertWarehouse($document->warehouse_id);
             if ($document->status !== 'pending') {
                 abort_if($document->status === 'rejected', 409, 'A rejected issue cannot be accepted.');
 
@@ -163,8 +168,9 @@ class StockDocumentController extends Controller
     /** Reject a pending Stock Issue or Stock Adjustment: no stock moves. */
     public function reject(Request $request, string $id, string $kind)
     {
-        return DB::transaction(function () use ($id, $kind) {
+        return DB::transaction(function () use ($request, $id, $kind) {
             $document = StockDocument::where('kind', $kind)->whereKey($id)->lockForUpdate()->firstOrFail();
+            $request->user()->assertWarehouse($document->warehouse_id);
             if ($document->status === 'rejected') {
                 return $document->toApi();
             }
@@ -189,6 +195,7 @@ class StockDocumentController extends Controller
 
         return DB::transaction(function () use ($request, $id, $data) {
             $issue = StockDocument::where('kind', 'issue')->whereKey($id)->lockForUpdate()->firstOrFail();
+            $request->user()->assertWarehouse($issue->to_warehouse_id);
             abort_unless($issue->workflow === 'controlled', 409, 'Legacy transfers already credited the destination.');
             if ($existing = StockDocument::withTrashed()->find($data['id'])) {
                 abort_unless($existing->transfer_id === $issue->id, 409, 'Receipt ID already belongs to another document.');

@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Models\Product;
 use App\Models\StockMovement;
-use App\Support\Audit;
 use App\Support\Images;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -89,7 +88,6 @@ class ProductController extends Controller
     {
         // Soft delete: old invoices and the stock ledger still point at it.
         $product->delete();
-        Audit::log('delete', 'product', $product->id, ['name' => $product->name, 'sku' => $product->sku]);
 
         return response()->noContent();
     }

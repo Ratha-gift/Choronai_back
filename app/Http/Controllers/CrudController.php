@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
-use App\Support\Audit;
 use App\Support\Resources;
 use App\Support\Settings;
 use Illuminate\Database\Eloquent\Builder;
@@ -76,9 +75,7 @@ class CrudController extends Controller
         $this->authorizePermission($request, $permission, 'edit');
         $row = $model::findOrFail($id);
         $data = $this->blankStrings($request->validate($this->rules($rules, $model, $id, partial: true)), $rules);
-        $before = $row->toArray();
-        $row->update($data);
-        Audit::log('update', $resource, $id, $before, $row->toArray());
+        $row->update($data); // logged by the Audited trait
 
         return $row;
     }
@@ -93,7 +90,6 @@ class CrudController extends Controller
         } catch (QueryException) {
             abort(409, 'This record is used by other records and cannot be deleted.');
         }
-        Audit::log('delete', $resource, $id, $row->toArray());
 
         return response()->noContent();
     }

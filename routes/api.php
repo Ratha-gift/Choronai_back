@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AuditController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CrudController;
 use App\Http\Controllers\FrontendWorkspaceController;
@@ -36,6 +37,8 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::post('auth/logout', [AuthController::class, 'logout']);
     Route::post('auth/change-password', [AuthController::class, 'changePassword']);
     Route::get('audit/logins', [AuthController::class, 'loginHistory'])->middleware('perm:settings.system,users.view');
+    Route::get('audit/activity', [AuditController::class, 'activity'])->middleware('perm:settings.system,users.view');
+    Route::get('audit/history/{id}', [AuditController::class, 'history']);
 
     // People
     Route::get('member-cards/{card}/history', [RewardController::class, 'history'])->middleware('perm:memberCards.view');

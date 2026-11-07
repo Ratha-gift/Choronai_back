@@ -46,6 +46,7 @@ class RegisterController extends Controller
             'open_note' => ['nullable', 'string'],
             'opened_at' => ['nullable', 'date'],
         ]);
+        $request->user()->assertWarehouse($data['warehouse_id']);
 
         $register = DB::transaction(function () use ($request, $data) {
             // Lock a row that exists even when this user has no shifts yet.

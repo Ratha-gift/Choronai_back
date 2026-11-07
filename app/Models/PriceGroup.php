@@ -2,4 +2,7 @@
 
 namespace App\Models;
 
-class PriceGroup extends Model {}
+class PriceGroup extends Model
+{
+    use Concerns\Audited;
+}

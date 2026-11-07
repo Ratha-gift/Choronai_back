@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Register extends Model
 {
+    use Concerns\Audited;
+
     protected $casts = ['opened_at' => 'datetime', 'closed_at' => 'datetime', 'counted_usd' => 'float', 'closing_summary' => 'array'];
 
     public function user(): BelongsTo
