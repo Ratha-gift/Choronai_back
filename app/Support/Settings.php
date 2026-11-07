@@ -51,15 +51,14 @@ class Settings
 
         // The POS PIN is kept only as a salted SHA-256, which the POS can also
         // check offline (section 7 of docs/backend-plan.md).
-        if (array_key_exists('pin_code', $values)) {
-            unset($merged['pin_code']);
-            $pin = (string) $values['pin_code'];
-            if ($pin === '') {
-                unset($merged['pin_hash'], $merged['pin_salt']);
-            } else {
-                $merged['pin_salt'] = bin2hex(random_bytes(8));
-                $merged['pin_hash'] = self::pinHash($merged['pin_salt'], $pin);
-            }
+        // The browser never receives the PIN, so its PIN field is empty on
+        // every save: empty keeps the PIN. remove_pin: true takes it away.
+        unset($merged['pin_code'], $merged['remove_pin']);
+        if (! empty($values['remove_pin'])) {
+            unset($merged['pin_hash'], $merged['pin_salt']);
+        } elseif (array_key_exists('pin_code', $values) && (string) $values['pin_code'] !== '') {
+            $merged['pin_salt'] = bin2hex(random_bytes(8));
+            $merged['pin_hash'] = self::pinHash($merged['pin_salt'], (string) $values['pin_code']);
         }
 
         Setting::updateOrCreate(['scope' => $scope], ['values' => $merged]);

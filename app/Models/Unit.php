@@ -2,4 +2,7 @@
 
 namespace App\Models;
 
-class Unit extends Model {}
+class Unit extends Model
+{
+    use Concerns\Audited;
+}

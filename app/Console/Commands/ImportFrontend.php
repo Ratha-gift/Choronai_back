@@ -48,6 +48,12 @@ class ImportFrontend extends Command
 
     public function handle(): int
     {
+        // Imported rows were made before this server: no user to log.
+        return \App\Support\Audit::quietly(fn () => $this->import());
+    }
+
+    private function import(): int
+    {
         $data = json_decode((string) file_get_contents($this->argument('file')), true);
         if (! is_array($data) || ! isset($data['choronai-next-catalog-v1'])) {
             $this->error('The file is not a frontend workspace export.');

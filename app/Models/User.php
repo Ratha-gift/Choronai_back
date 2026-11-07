@@ -10,7 +10,7 @@ use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
-    use HasApiTokens, HasUuids;
+    use HasApiTokens, HasUuids, Concerns\Audited;
 
     protected $guarded = [];
 
@@ -33,6 +33,63 @@ class User extends Authenticatable
     public function hasPermission(string $permission): bool
     {
         return (bool) $this->group?->allows($permission);
+    }
+
+    /**
+     * Staff with a branch and without "See all branches" (branches.all) work
+     * only with the warehouses of their own branch.
+     */
+    public function mayUseWarehouse(?string $warehouseId): bool
+    {
+        if (! $warehouseId || (string) $this->branch === '' || $this->hasPermission('branches.all')) {
+            return true;
+        }
+        $branchId = Branch::where('name', $this->branch)->value('id');
+        if (! $branchId) {
+            return true; // branch renamed or removed: do not lock the user out
+        }
+
+        return Warehouse::whereKey($warehouseId)->value('branch_id') === $branchId;
+    }
+
+    public function isOwner(): bool
+    {
+        return (bool) $this->group?->is_owner;
+    }
+
+    /**
+     * A user may only hand out rights they have themselves: the owner manages
+     * every group; others only groups that are not the owner group and whose
+     * permissions they all have. This stops "Admin makes itself Owner".
+     */
+    public function mayManageGroup(?UserGroup $group): bool
+    {
+        if ($this->isOwner()) {
+            return true;
+        }
+        if (! $group || $group->is_owner) {
+            return false;
+        }
+
+        return $this->mayGrant($group->permissions ?? []);
+    }
+
+    /** Every permission in $permissions is one this user has. */
+    public function mayGrant(array $permissions): bool
+    {
+        return $this->isOwner()
+            || collect($permissions)->every(fn ($permission) => $this->hasPermission((string) $permission));
+    }
+
+    /** Editing, resetting the password of or deleting $user. */
+    public function mayManageUser(User $user): bool
+    {
+        return $this->isOwner() || $user->id === $this->id || $this->mayManageGroup($user->group);
+    }
+
+    public function assertWarehouse(?string $warehouseId): void
+    {
+        abort_unless($this->mayUseWarehouse($warehouseId), 403, 'This warehouse belongs to another branch.');
     }
 
     /** Shape used by the frontend session and the Users page. */

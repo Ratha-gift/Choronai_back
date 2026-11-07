@@ -21,6 +21,12 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
+        // Sample data: no user made it, so nothing goes to the audit log.
+        \App\Support\Audit::quietly(fn () => $this->seedShop());
+    }
+
+    private function seedShop(): void
+    {
         $owner = UserGroup::create(['name' => 'owner', 'description' => 'Owner', 'is_owner' => true, 'permissions' => []]);
         $sale = UserGroup::create(['name' => 'sale', 'description' => 'Sale', 'permissions' => [
             'sales.pos', 'sales.returns', 'products.view', 'customers.view', 'customers.add',

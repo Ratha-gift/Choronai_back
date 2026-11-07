@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class MemberCard extends Model
 {
+    use Concerns\Audited;
+
     protected $casts = ['expiry' => 'date:Y-m-d'];
 
     public function customer(): BelongsTo

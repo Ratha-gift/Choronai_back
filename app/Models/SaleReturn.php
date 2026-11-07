@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class SaleReturn extends Model
 {
-    use SoftDeletes;
+    use SoftDeletes, Concerns\Audited;
 
     protected $casts = ['date' => 'datetime', 'needs_review' => 'boolean'];
 

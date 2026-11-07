@@ -50,6 +50,7 @@ class UserController extends Controller
             'id' => ['sometimes', 'uuid', Rule::unique('users', 'id')],
             'password' => 'required|string|min:6',
         ]));
+        $this->assertMayAssign($request, $data['group_id']);
         $user = User::create($data);
 
         return response()->json($user->refresh()->toApi(), 201);
@@ -61,12 +62,15 @@ class UserController extends Controller
         if (empty($data['password'])) {
             unset($data['password']);
         }
+        abort_unless($request->user()->mayManageUser($user), 403, 'Only the owner can change this account.');
+        if (isset($data['group_id']) && $data['group_id'] !== $user->group_id) {
+            $this->assertMayAssign($request, $data['group_id']);
+        }
         $this->keepAnOwner($user, $data);
         $user->update($data);
         if (($data['status'] ?? null) === 'inactive' || isset($data['password'])) {
             $user->tokens()->delete();
         }
-        Audit::log('update', 'user', $user->id, null, collect($data)->except('password')->all());
 
         return $user->refresh()->toApi();
     }
@@ -74,6 +78,7 @@ class UserController extends Controller
     public function destroy(Request $request, User $user)
     {
         abort_if($user->id === $request->user()->id, 422, 'You cannot delete your own account.');
+        abort_unless($request->user()->mayManageUser($user), 403, 'Only the owner can delete this account.');
         $this->keepAnOwner($user, ['status' => 'deleted']);
         $user->tokens()->delete();
         // Keep the row for old documents; the account can no longer sign in.
@@ -108,6 +113,16 @@ class UserController extends Controller
             'group_id' => [$id ? 'sometimes' : 'required', 'uuid', 'exists:user_groups,id'],
             'status' => ['sometimes', 'in:active,inactive'],
         ];
+    }
+
+    /** Nobody can put a user in a group with more rights than their own. */
+    private function assertMayAssign(Request $request, string $groupId): void
+    {
+        abort_unless(
+            $request->user()->mayManageGroup(UserGroup::find($groupId)),
+            403,
+            'You cannot give a user more rights than you have.',
+        );
     }
 
     /** The shop must always keep at least one active owner. */

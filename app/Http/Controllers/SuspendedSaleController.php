@@ -29,8 +29,14 @@ class SuspendedSaleController extends Controller
         return response()->json(SuspendedSale::create($data + ['created_by' => $request->user()->id]), 201);
     }
 
-    public function destroy(SuspendedSale $suspendedSale)
+    public function destroy(Request $request, SuspendedSale $suspendedSale)
     {
+        $user = $request->user();
+        abort_unless(
+            $suspendedSale->created_by === $user->id || $user->hasPermission('sales.edit'),
+            403,
+            'This suspended sale belongs to another cashier.',
+        );
         $suspendedSale->delete();
 
         return response()->noContent();

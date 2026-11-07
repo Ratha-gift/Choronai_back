@@ -2,4 +2,7 @@
 
 namespace App\Models;
 
-class Printer extends Model {}
+class Printer extends Model
+{
+    use Concerns\Audited;
+}
