@@ -19,6 +19,7 @@ class Resources
             'branches' => [Models\Branch::class, $settings, ['name', 'name_km', 'city'], [
                 'name' => 'required|string|max:120', 'name_km' => 'nullable|string', 'vat' => 'nullable|string',
                 'phone' => 'nullable|string', 'email' => 'nullable|email', 'city' => 'nullable|string', 'country' => 'nullable|string',
+                'logo' => 'nullable|string', 'address' => 'nullable|string|max:255', 'prefix' => 'nullable|string|max:30', 'invoice_footer' => 'nullable|string',
             ]],
             'warehouses' => [Models\Warehouse::class, $settings, ['code', 'name'], [
                 'code' => 'required|string|max:30', 'name' => 'required|string|max:120', 'type' => 'required|in:main,branch',

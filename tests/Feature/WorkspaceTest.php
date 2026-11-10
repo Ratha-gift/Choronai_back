@@ -57,6 +57,19 @@ class WorkspaceTest extends ApiTestCase
         $this->assertDatabaseHas('customers', ['id' => $id, 'name' => 'Dara']);
     }
 
+    public function test_branch_keeps_what_it_prints_on_invoices(): void
+    {
+        $this->actingAsUser('admin021');
+        $this->commit('choronai-branches-v1', fn ($rows) => array_map(fn ($row) => [
+            ...$row, 'address' => 'St 271', 'prefix' => 'INV8', 'invoiceFooter' => 'Thank you', 'logo' => '/api/backend/images/x.png',
+        ], $rows));
+        $branch = collect($this->snapshot()['data']['choronai-branches-v1'])->first();
+        $this->assertSame('St 271', $branch['address']);
+        $this->assertSame('INV8', $branch['prefix']);
+        $this->assertSame('Thank you', $branch['invoiceFooter']);
+        $this->assertSame('/api/backend/images/x.png', $branch['logo']);
+    }
+
     public function test_stock_receive_and_adjustment_approval_move_stock(): void
     {
         $this->actingAsUser('admin021');
@@ -194,6 +207,33 @@ class WorkspaceTest extends ApiTestCase
         ]);
         $this->assertSame(40.0, $this->stock('MEAT-001', 'CEN'));
         $this->assertDatabaseHas('stock_documents', ['id' => $issue, 'status' => 'received']);
+    }
+
+    public function test_short_transfer_reported_from_the_browser(): void
+    {
+        $this->actingAsUser('admin021');
+        $beef = $this->product('MEAT-001');
+        $issue = (string) Str::uuid();
+        $this->commit('choronai-stockIssues-v1', fn ($rows) => [...$rows, [
+            'id' => $issue, 'date' => now()->toIso8601String(), 'reference' => 'SIS/TEST/3', 'branch' => 'Central',
+            'warehouse' => 'Main warehouse', 'toBranch' => 'Central', 'toWarehouse' => 'Central branch', 'status' => 'accepted',
+            'items' => [['productId' => $beef->id, 'quantity' => 6, 'price' => 25000]],
+        ]]);
+        $this->assertSame(64.0, $this->stock('MEAT-001', 'MAIN'));
+
+        $this->commitMany([
+            'choronai-stockReceives-v1' => fn ($rows) => [...$rows, [
+                'id' => (string) Str::uuid(), 'shortOf' => $issue, 'date' => now()->toIso8601String(),
+                'branch' => 'Central', 'warehouse' => 'Main warehouse', 'note' => 'Arrived empty',
+                'items' => [['productId' => $beef->id, 'quantity' => 6, 'price' => 25000]],
+            ]],
+            'choronai-stockIssues-v1' => fn ($rows) => collect($rows)
+                ->map(fn ($r) => $r['id'] === $issue ? [...$r, 'status' => 'short_received'] : $r)->all(),
+        ]);
+        $this->assertSame(70.0, $this->stock('MEAT-001', 'MAIN'));
+        $this->assertSame(30.0, $this->stock('MEAT-001', 'CEN'));
+        $this->assertDatabaseHas('stock_documents', ['id' => $issue, 'status' => 'short_received']);
+        $this->assertDatabaseHas('stock_documents', ['short_of' => $issue, 'kind' => 'receive', 'note' => 'Arrived empty']);
     }
 
     public function test_rejected_issue_and_cashier_limits(): void
