@@ -89,6 +89,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     // Stock Management
     Route::post('stock/adjustments/{id}/approve', [StockDocumentController::class, 'approve'])->middleware('perm:stock.approve');
     Route::post('stock/issues/{id}/receive', [StockDocumentController::class, 'receiveTransfer'])->middleware('perm:stock.receive');
+    Route::post('stock/issues/{id}/short', [StockDocumentController::class, 'reportShort'])->middleware('perm:stock.receive');
     Route::post('stock/issues/{id}/accept', [StockDocumentController::class, 'accept'])->middleware('perm:stock.approve');
     Route::post('stock/issues/{id}/reject', [StockDocumentController::class, 'reject'])->defaults('kind', 'issue')->middleware('perm:stock.approve');
     Route::post('stock/adjustments/{id}/reject', [StockDocumentController::class, 'reject'])->defaults('kind', 'adjustment')->middleware('perm:stock.approve');

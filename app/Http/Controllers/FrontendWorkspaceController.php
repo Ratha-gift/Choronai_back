@@ -79,6 +79,12 @@ class FrontendWorkspaceController extends Controller
 
                         continue;
                     }
+                    // "Report short" on a transfer: the rest goes back to the sender.
+                    if (! $old && ! empty($row['short_of'])) {
+                        $this->call($request, 'POST', 'stock/issues/'.$row['short_of'].'/short', $row);
+
+                        continue;
+                    }
                     if (! $old && ! empty($row['transfer_id'])) {
                         $this->call($request, 'POST', 'stock/issues/'.$row['transfer_id'].'/receive', $row);
 

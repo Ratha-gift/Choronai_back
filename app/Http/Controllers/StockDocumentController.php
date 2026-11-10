@@ -234,6 +234,55 @@ class StockDocumentController extends Controller
         });
     }
 
+    /**
+     * The receiving branch got less than was sent (6 kg left, 4 kg arrived):
+     * what never arrived goes back into the sending warehouse as a Stock
+     * Receive there, and the transfer is closed. The client's UUID makes a
+     * retry harmless.
+     */
+    public function reportShort(Request $request, string $id)
+    {
+        $data = $request->validate([
+            'id' => ['required', 'uuid'],
+            'note' => ['required', 'string', 'max:500'],
+        ]);
+
+        return DB::transaction(function () use ($request, $id, $data) {
+            $issue = StockDocument::where('kind', 'issue')->whereKey($id)->lockForUpdate()->firstOrFail();
+            $request->user()->assertWarehouse($issue->to_warehouse_id);
+            abort_unless($issue->workflow === 'controlled', 409, 'Legacy transfers already credited the destination.');
+            if ($existing = StockDocument::withTrashed()->find($data['id'])) {
+                abort_unless($existing->short_of === $issue->id, 409, 'Return ID already belongs to another document.');
+
+                return $existing->toApi();
+            }
+            abort_unless(in_array($issue->status, ['dispatched', 'partially_received'], true), 409, 'Transfer is not awaiting receipt.');
+            $received = DB::table('stock_document_lines as lines')
+                ->join('stock_documents as documents', 'documents.id', '=', 'lines.document_id')
+                ->where('documents.transfer_id', $issue->id)
+                ->selectRaw('lines.product_id, SUM(lines.quantity) as quantity')->groupBy('lines.product_id')
+                ->pluck('quantity', 'product_id');
+            $items = [];
+            foreach ($issue->lines as $line) {
+                $missing = round((float) $line->quantity - (float) ($received[$line->product_id] ?? 0), 3);
+                if ($missing > 0) {
+                    $items[] = ['product_id' => $line->product_id, 'quantity' => $missing, 'price' => $line->price, 'expiry' => $line->expiry];
+                }
+            }
+            abort_unless($items, 409, 'Nothing is missing from this transfer.');
+            $return = StockDocument::create([
+                ...$this->header(['warehouse_id' => $issue->warehouse_id, 'items' => $items, 'note' => $data['note']], 'receive'),
+                'id' => $data['id'], 'kind' => 'receive', 'workflow' => 'controlled', 'short_of' => $issue->id,
+                'reference' => References::next(self::PREFIX['receive'], now()), 'created_by' => $request->user()->id,
+            ]);
+            $this->saveLines($return, $items);
+            $issue->update(['status' => 'short_received']);
+            Audit::log('report_short', 'stock_issue', $issue->id, null, ['return_id' => $return->id, 'items' => $items, 'note' => $data['note']]);
+
+            return response()->json($return->load('lines', 'warehouse', 'creator')->toApi(), 201);
+        });
+    }
+
     private function validated(Request $request, string $kind, ?string $id = null): array
     {
         $data = $request->validate([

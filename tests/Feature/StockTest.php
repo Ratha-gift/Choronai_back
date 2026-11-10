@@ -51,6 +51,39 @@ class StockTest extends ApiTestCase
         $this->getJson("/api/v1/stock/issues/{$id}")->assertJsonPath('status', 'received');
     }
 
+    public function test_short_transfer_sends_the_rest_back(): void
+    {
+        $pork = $this->product('MEAT-002');
+        $id = $this->postJson('/api/v1/stock/issues', [
+            'warehouseId' => $this->warehouse('MAIN')->id,
+            'toWarehouseId' => $this->warehouse('CEN')->id,
+            'items' => [['productId' => $pork->id, 'quantity' => 6, 'price' => 20000]],
+        ])->assertCreated()->json('id');
+        $this->assertSame(64.0, $this->stock('MEAT-002', 'MAIN'));
+        $this->postJson("/api/v1/stock/issues/{$id}/receive", [
+            'id' => (string) \Illuminate\Support\Str::uuid(), 'items' => [['productId' => $pork->id, 'quantity' => 4]],
+        ])->assertCreated();
+
+        $short = ['id' => (string) \Illuminate\Support\Str::uuid()];
+        $this->postJson("/api/v1/stock/issues/{$id}/short", $short)->assertStatus(422);
+        $short['note'] = 'Only 4 kg arrived';
+        $this->postJson("/api/v1/stock/issues/{$id}/short", $short)->assertCreated()
+            ->assertJsonPath('shortOf', $id)->assertJsonPath('warehouse', 'Main warehouse')
+            ->assertJsonPath('items.0.quantity', 2)->assertJsonPath('total', 40000);
+        // A retry does not move stock twice.
+        $this->postJson("/api/v1/stock/issues/{$id}/short", $short)->assertOk();
+        $this->assertSame(66.0, $this->stock('MEAT-002', 'MAIN'));
+        $this->assertSame(34.0, $this->stock('MEAT-002', 'CEN'));
+        $this->getJson("/api/v1/stock/issues/{$id}")->assertJsonPath('status', 'short_received');
+
+        // Closed: no more receipts and no second report.
+        $this->postJson("/api/v1/stock/issues/{$id}/receive", [
+            'id' => (string) \Illuminate\Support\Str::uuid(), 'items' => [['productId' => $pork->id, 'quantity' => 1]],
+        ])->assertStatus(409);
+        $this->postJson("/api/v1/stock/issues/{$id}/short", ['id' => (string) \Illuminate\Support\Str::uuid(), 'note' => 'again'])
+            ->assertStatus(409);
+    }
+
     public function test_issue_needs_a_different_destination(): void
     {
         $main = $this->warehouse('MAIN')->id;
