@@ -36,7 +36,7 @@ class StockDocument extends Model
     public function toApi(): array
     {
         return [
-            ...collect($this->toArray())->except(['lines', 'warehouse', 'to_warehouse', 'creator', 'deleted_at'])->all(),
+            ...collect($this->attributesToArray())->except(['lines', 'warehouse', 'to_warehouse', 'creator', 'deleted_at'])->all(),
             'warehouse' => $this->warehouse?->name,
             'to_warehouse' => $this->toWarehouse?->name,
             'grand_total' => $this->total,
