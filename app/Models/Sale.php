@@ -51,7 +51,7 @@ class Sale extends Model
     public function toApi(): array
     {
         return [
-            ...collect($this->toArray())->except(['lines', 'warehouse', 'customer', 'creator', 'payments', 'register', 'member_card', 'deleted_at'])->all(),
+            ...collect($this->attributesToArray())->except(['lines', 'warehouse', 'customer', 'creator', 'payments', 'register', 'member_card', 'deleted_at'])->all(),
             'warehouse' => $this->warehouse?->name,
             'customer' => $this->customer?->name,
             'balance' => $this->grand_total - $this->paid,

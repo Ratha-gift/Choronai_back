@@ -76,8 +76,13 @@ class FrontendWorkspace
             if (! $stock && ! $user->hasPermission('sales.view')) {
                 $query->where('created_by', $user->id);
             }
-            $with = $stock ? ['lines', 'warehouse', 'creator'] : ['lines', 'warehouse', 'creator', ...($type === Models\Sale::class ? ['payments'] : [])];
-            $data[self::key($name)] = $query->with($with)->get()->map(function ($document) use ($branches, $warehouses, $stock) {
+            // Load every relation toApi() reads in one query each, not one per document.
+            $with = $stock ? ['lines', 'warehouse', 'toWarehouse', 'creator'] : ['lines', 'warehouse', 'creator', 'customer', ...($type === Models\Sale::class ? ['payments', 'memberCard'] : [])];
+            $documents = $query->with($with)->get();
+            $saleReferences = $type === Models\SaleReturn::class
+                ? Models\Sale::withTrashed()->whereIn('id', $documents->pluck('sale_id')->filter()->unique())->pluck('reference', 'id')
+                : collect();
+            $data[self::key($name)] = $documents->map(function ($document) use ($branches, $warehouses, $stock, $saleReferences) {
                 $out = $document->toApi();
                 if ($document instanceof Models\Sale) {
                     // The frontend's payment list (Sales → View / Add Payment).
@@ -100,7 +105,7 @@ class FrontendWorkspace
                     $out['to_warehouse'] = $destination?->name;
                 }
                 if ($document instanceof Models\SaleReturn) {
-                    $out['reference_to'] = Models\Sale::withTrashed()->find($document->sale_id)?->reference;
+                    $out['reference_to'] = $saleReferences->get($document->sale_id);
                 }
 
                 return $out;
@@ -113,12 +118,13 @@ class FrontendWorkspace
             ...$row->toArray(), 'warehouse' => $warehouses->get($row->warehouse_id)?->name,
             'customer' => $customers->get($row->customer_id)?->name, 'created_by' => $user->username,
         ])->all();
+        $usernames = Models\User::pluck('username', 'id');
         $data[self::key('rewardLedger')] = ($user->hasPermission('memberCards.view') || $user->hasPermission('sales.pos'))
             ? Models\RewardEntry::all()->map(fn ($entry) => [
                 ...$entry->toArray(), 'event_id' => $entry->event_key, 'card_id' => $entry->member_card_id,
                 'date' => $entry->created_at, 'reference' => $entry->sale_id ?? $entry->reward_id,
                 'kind' => $entry->kind === 'reversal' ? 'return' : $entry->kind,
-                'created_by' => Models\User::find($entry->created_by)?->username,
+                'created_by' => $usernames->get($entry->created_by),
                 ...($entry->details ?? []),
             ])->all() : [];
         foreach (['system', 'pos'] as $scope) {

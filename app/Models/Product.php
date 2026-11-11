@@ -46,7 +46,7 @@ class Product extends Model
             : (float) $levels->sum('quantity');
 
         return [
-            ...collect($this->toArray())->except(['promo_price', 'promo_start', 'promo_end', 'stock_levels', 'combo_items', 'suppliers', 'deleted_at'])->all(),
+            ...collect($this->attributesToArray())->except(['promo_price', 'promo_start', 'promo_end', 'stock_levels', 'combo_items', 'suppliers', 'deleted_at'])->all(),
             'quantity' => round($quantity, 3),
             'stock' => $levels->mapWithKeys(fn ($level) => [$level->warehouse_id => (float) $level->quantity]),
             'promotion' => $this->promo_price === null ? null : [

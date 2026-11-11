@@ -46,6 +46,34 @@ class WorkspaceTest extends ApiTestCase
         $this->assertNotEmpty($beef['stockByLocation']);
     }
 
+    public function test_poll_with_current_revision_is_unchanged(): void
+    {
+        $this->actingAsUser('admin021');
+        $revision = $this->snapshot()['revision'];
+        $this->getJson("/api/v1/frontend/workspace?revision={$revision}")->assertOk()
+            ->assertJson(['unchanged' => true, 'revision' => $revision])->assertJsonMissingPath('data');
+
+        $this->commit('choronai-customers-v1', fn ($rows) => [...$rows, [
+            'id' => (string) Str::uuid(), 'name' => 'Sokha', 'phone' => '011 222 333', 'company' => '', 'email' => '',
+            'customerGroup' => 'General', 'priceGroup' => '', 'address' => '', 'code' => '', 'awardPoints' => 0,
+        ]]);
+        $fresh = $this->getJson("/api/v1/frontend/workspace?revision={$revision}")->assertOk()->json();
+        $this->assertArrayNotHasKey('unchanged', $fresh);
+        $this->assertSame($revision + 1, $fresh['revision']);
+        $this->assertContains('Sokha', array_column($fresh['data']['choronai-customers-v1'], 'name'));
+    }
+
+    public function test_snapshot_does_not_query_once_per_document(): void
+    {
+        $this->actingAsUser('admin021');
+        \Illuminate\Database\Eloquent\Model::preventLazyLoading();
+        try {
+            $this->snapshot();
+        } finally {
+            \Illuminate\Database\Eloquent\Model::preventLazyLoading(false);
+        }
+    }
+
     public function test_customer_added_in_the_browser_is_saved(): void
     {
         $this->actingAsUser('admin021');

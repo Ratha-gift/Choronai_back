@@ -16,8 +16,22 @@ class FrontendWorkspaceController extends Controller
 {
     public function show(Request $request, FrontendWorkspace $workspace)
     {
+        // Browsers poll with the revision they already have; when nothing was
+        // saved since, answer at once instead of rebuilding every collection.
+        if ($request->filled('revision')) {
+            $revision = (int) DB::table('workspace_revisions')->where('id', 1)->value('revision');
+            if ($revision === (int) $request->query('revision')) {
+                return ['initialized' => true, 'backend' => 'laravel', 'revision' => $revision, 'unchanged' => true];
+            }
+        }
+
         return DB::transaction(function () use ($request, $workspace) {
-            DB::table('workspace_revisions')->where('id', 1)->lockForUpdate()->first();
+            // One consistent view of the data and its revision without
+            // blocking other devices: writers bump the revision in the same
+            // transaction as their change.
+            if (DB::getDriverName() === 'pgsql') {
+                DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            }
 
             return $workspace->snapshot($request);
         });
