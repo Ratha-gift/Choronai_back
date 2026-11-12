@@ -178,10 +178,22 @@ class SaleService
         });
     }
 
-    /** Deleting a sale puts its stock back and takes back its points. */
+    /** Deleting an unpaid sale puts its stock back and takes back its points. */
     public function delete(Sale $sale): void
     {
-        abort(409, 'Posted sales are retained. Use a linked sale return to correct a sale.');
+        DB::transaction(function () use ($sale) {
+            $sale = Sale::whereKey($sale->id)->lockForUpdate()->firstOrFail();
+            // A paid sale keeps an accounting record; correct it with a return instead.
+            abort_if($sale->paid > 0, 409, 'This sale has a payment. Use a linked sale return to correct it.');
+            abort_if($sale->returned > 0, 409, 'This sale has a return and cannot be deleted.');
+            // Put the stock back and take back any points it earned.
+            $this->stock->reverse('sale', $sale->id);
+            app(RewardService::class)->reverseEarn($sale);
+            Audit::log('delete', 'sale', $sale->id, ['reference' => $sale->reference], null);
+            $sale->payments()->delete();
+            $sale->lines()->delete();
+            $sale->delete();
+        });
     }
 
     /** Copies name, code and unit from the product so old invoices never change. */

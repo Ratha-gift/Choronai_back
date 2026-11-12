@@ -102,6 +102,20 @@ class PosTest extends ApiTestCase
         $this->assertSame(27.0, $this->stock('MEAT-001', 'CEN'));
     }
 
+    public function test_an_unpaid_sale_can_be_deleted_and_puts_stock_back(): void
+    {
+        $this->openRegister();
+        // A credit sale: nothing tendered, so paid is 0.
+        $id = $this->sell('MEAT-001', 3, ['payment' => ['method' => 'Cash', 'tenderedRiel' => 0]])->json('id');
+        $this->assertSame(27.0, $this->stock('MEAT-001', 'CEN'));
+
+        $this->actingAsUser('admin021');
+        $this->deleteJson("/api/v1/sales/{$id}")->assertNoContent();
+        // The stock is back and the sale is gone.
+        $this->assertSame(30.0, $this->stock('MEAT-001', 'CEN'));
+        $this->assertNull(\App\Models\Sale::find($id));
+    }
+
     public function test_offline_sync_is_idempotent_and_flags_negative_stock(): void
     {
         $device = Device::create(['name' => 'Counter 1', 'warehouse_id' => $this->warehouse('CEN')->id, 'reference_prefix' => 'A1']);

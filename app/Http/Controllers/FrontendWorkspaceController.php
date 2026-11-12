@@ -132,7 +132,14 @@ class FrontendWorkspaceController extends Controller
                 }
             }
             foreach ($this->delta($before, $changes, FrontendWorkspace::key('sales')) as [$old, $row]) {
-                abort_unless($row, 409, 'Posted sales cannot be deleted.');
+                if (! $row) {
+                    // A removed sale: allowed only while nothing was paid or returned.
+                    abort_unless($old && (int) ($old['paid'] ?? 0) === 0 && (int) ($old['returned'] ?? 0) === 0,
+                        409, 'A paid sale cannot be deleted. Use Return Sale instead.');
+                    $this->call($request, 'DELETE', "sales/{$old['id']}");
+
+                    continue;
+                }
                 if ($old) {
                     abort_unless($this->same($old, $row, ['items', 'warehouse', 'customer', 'discount', 'shipping', 'order_tax']), 409,
                         'A posted sale cannot be changed. Use Return Sale instead.');
