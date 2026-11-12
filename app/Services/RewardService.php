@@ -58,4 +58,21 @@ class RewardService
             'points' => -max(0, $target - $prior), 'spent' => -$amount,
         ]);
     }
+
+    /** Takes back the points and spend a sale earned, when the whole sale is deleted. */
+    public function reverseEarn(Sale $sale): void
+    {
+        $earned = RewardEntry::where('event_key', 'sale:'.$sale->id)->where('kind', 'earn')->first();
+        if (! $earned) {
+            return;
+        }
+        if ($sale->member_card_id && $card = MemberCard::whereKey($sale->member_card_id)->lockForUpdate()->first()) {
+            $card->decrement('award_points', $earned->points);
+            $card->decrement('spent', (int) $earned->spent);
+        }
+        if ($sale->customer_id) {
+            Customer::whereKey($sale->customer_id)->decrement('award_points', $earned->points);
+        }
+        $earned->delete();
+    }
 }

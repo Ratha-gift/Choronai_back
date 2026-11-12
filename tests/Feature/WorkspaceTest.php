@@ -207,6 +207,37 @@ class WorkspaceTest extends ApiTestCase
         $this->assertDatabaseMissing('payments', ['sale_id' => $sale]);
     }
 
+    public function test_removing_a_sale_is_allowed_only_while_unpaid(): void
+    {
+        $this->actingAsUser('admin021');
+        $beef = $this->product('MEAT-001');
+        $this->commit('choronai-registers-v1', fn ($rows) => [...$rows, ['id' => (string) Str::uuid(),
+            'status' => 'open', 'warehouse' => 'Central branch', 'cashInHand' => 0, 'openedAt' => now()->toIso8601String()]]);
+
+        // A paid sale cannot be removed from the browser: 409, stock stays down.
+        $paid = (string) Str::uuid();
+        $this->commit('choronai-sales-v1', fn ($rows) => [...$rows, [
+            'id' => $paid, 'reference' => 'SALE/TEST/PAID', 'date' => now()->toIso8601String(), 'warehouse' => 'Central branch',
+            'items' => [['productId' => $beef->id, 'quantity' => 1, 'price' => 32000]],
+            'paid' => 32000, 'paymentMethod' => 'Cash', 'payments' => [['id' => 'P1', 'method' => 'Cash', 'amount' => 32000]],
+        ]]);
+        $this->assertSame(29.0, $this->stock('MEAT-001', 'CEN'));
+        $this->commit('choronai-sales-v1', fn ($rows) => collect($rows)->reject(fn ($r) => $r['id'] === $paid)->values()->all(), 409);
+        $this->assertDatabaseHas('sales', ['id' => $paid]);
+
+        // An unpaid sale can be removed; its stock goes back.
+        $unpaid = (string) Str::uuid();
+        $this->commit('choronai-sales-v1', fn ($rows) => [...$rows, [
+            'id' => $unpaid, 'reference' => 'SALE/TEST/CREDIT', 'date' => now()->toIso8601String(), 'warehouse' => 'Central branch',
+            'items' => [['productId' => $beef->id, 'quantity' => 2, 'price' => 32000]],
+            'paid' => 0, 'paymentMethod' => 'Not yet paid', 'payments' => [],
+        ]]);
+        $this->assertSame(27.0, $this->stock('MEAT-001', 'CEN'));
+        $this->commit('choronai-sales-v1', fn ($rows) => collect($rows)->reject(fn ($r) => $r['id'] === $unpaid)->values()->all());
+        $this->assertSame(29.0, $this->stock('MEAT-001', 'CEN'));
+        $this->assertNull(\App\Models\Sale::find($unpaid));
+    }
+
     public function test_stock_issue_waits_for_accept_then_transfer_is_received(): void
     {
         $this->actingAsUser('admin021');
