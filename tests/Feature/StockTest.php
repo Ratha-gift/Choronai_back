@@ -51,6 +51,56 @@ class StockTest extends ApiTestCase
         $this->getJson("/api/v1/stock/issues/{$id}")->assertJsonPath('status', 'received');
     }
 
+    /** A Central-branch stock manager who cannot touch the Main warehouse. */
+    private function branchManager(): void
+    {
+        $group = \App\Models\UserGroup::create(['name' => 'branch-stock', 'description' => 'Branch Stock',
+            'permissions' => ['stock.view', 'stock.approve', 'stock.receive']]);
+        \App\Models\User::create(['first_name' => 'Branch', 'last_name' => 'Manager', 'username' => 'branchmgr',
+            'email' => 'branch@example.com', 'password' => 'secret123', 'group_id' => $group->id]);
+        \App\Models\User::where('username', 'branchmgr')->update(['branch' => 'Central']);
+    }
+
+    public function test_receiving_branch_accepts_a_transfer_in_one_step(): void
+    {
+        $pork = $this->product('MEAT-002');
+        $id = $this->postJson('/api/v1/stock/issues', [
+            'warehouseId' => $this->warehouse('MAIN')->id,
+            'toWarehouseId' => $this->warehouse('CEN')->id,
+            'status' => 'pending',
+            'items' => [['productId' => $pork->id, 'quantity' => 10]],
+        ])->assertCreated()->json('id');
+        // Pending: no stock has moved yet.
+        $this->assertSame(70.0, $this->stock('MEAT-002', 'MAIN'));
+        $this->assertSame(30.0, $this->stock('MEAT-002', 'CEN'));
+
+        // The receiving branch accepts its own incoming transfer: it both
+        // dispatches from Main and receives into Central in one step.
+        $this->branchManager();
+        $this->actingAsUser('branchmgr');
+        $this->postJson("/api/v1/stock/issues/{$id}/accept")->assertOk();
+
+        $this->assertSame(60.0, $this->stock('MEAT-002', 'MAIN'));
+        $this->assertSame(40.0, $this->stock('MEAT-002', 'CEN'));
+        $this->assertDatabaseHas('stock_documents', ['id' => $id, 'status' => 'received']);
+        $this->assertDatabaseHas('stock_documents', ['transfer_id' => $id, 'kind' => 'receive']);
+    }
+
+    public function test_a_branch_cannot_accept_a_plain_issue_out_of_another_warehouse(): void
+    {
+        // An issue with no destination leaves the shop; only the sender accepts.
+        $pork = $this->product('MEAT-002');
+        $id = $this->postJson('/api/v1/stock/issues', [
+            'warehouseId' => $this->warehouse('MAIN')->id, 'status' => 'pending',
+            'items' => [['productId' => $pork->id, 'quantity' => 5]],
+        ])->assertCreated()->json('id');
+
+        $this->branchManager();
+        $this->actingAsUser('branchmgr');
+        $this->postJson("/api/v1/stock/issues/{$id}/accept")->assertStatus(403);
+        $this->assertSame(70.0, $this->stock('MEAT-002', 'MAIN'));
+    }
+
     public function test_short_transfer_sends_the_rest_back(): void
     {
         $pork = $this->product('MEAT-002');

@@ -269,6 +269,35 @@ class WorkspaceTest extends ApiTestCase
         $this->assertDatabaseHas('stock_documents', ['id' => $issue, 'status' => 'received']);
     }
 
+    public function test_receiving_branch_accepts_a_transfer_in_one_step_from_the_browser(): void
+    {
+        $this->actingAsUser('admin021');
+        $beef = $this->product('MEAT-001');
+        $issue = (string) Str::uuid();
+        $this->commit('choronai-stockIssues-v1', fn ($rows) => [...$rows, [
+            'id' => $issue, 'date' => now()->toIso8601String(), 'reference' => 'SIS/TEST/ONE', 'branch' => 'Central',
+            'warehouse' => 'Main warehouse', 'toBranch' => 'Central', 'toWarehouse' => 'Central branch', 'status' => 'pending',
+            'items' => [['productId' => $beef->id, 'code' => 'MEAT-001', 'name' => 'Fresh beef', 'quantity' => 10, 'price' => 25000]],
+        ]]);
+
+        // A Central-branch stock manager who cannot use the Main warehouse
+        // accepts the incoming transfer: the browser marks it "received".
+        $group = \App\Models\UserGroup::create(['name' => 'branch-stock', 'description' => 'Branch Stock',
+            'permissions' => ['stock.view', 'stock.approve', 'stock.receive']]);
+        \App\Models\User::create(['first_name' => 'Branch', 'last_name' => 'Manager', 'username' => 'branchmgr',
+            'email' => 'branch@example.com', 'password' => 'secret123', 'group_id' => $group->id]);
+        \App\Models\User::where('username', 'branchmgr')->update(['branch' => 'Central']);
+        $this->actingAsUser('branchmgr');
+
+        $this->commit('choronai-stockIssues-v1', fn ($rows) => collect($rows)
+            ->map(fn ($r) => $r['id'] === $issue ? [...$r, 'status' => 'received', 'stockApplied' => true] : $r)->all());
+
+        $this->assertSame(60.0, $this->stock('MEAT-001', 'MAIN'));
+        $this->assertSame(40.0, $this->stock('MEAT-001', 'CEN'));
+        $this->assertDatabaseHas('stock_documents', ['id' => $issue, 'status' => 'received']);
+        $this->assertDatabaseHas('stock_documents', ['transfer_id' => $issue, 'kind' => 'receive']);
+    }
+
     public function test_short_transfer_reported_from_the_browser(): void
     {
         $this->actingAsUser('admin021');
