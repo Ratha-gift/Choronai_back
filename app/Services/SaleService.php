@@ -56,8 +56,12 @@ class SaleService
             abort_if($card && isset($data['customer_id']) && $data['customer_id'] !== $card->customer_id, 422, 'Card belongs to a different customer.');
             $customerId = $data['customer_id'] ?? $card?->customer_id;
 
+            // Offline sales carry a client reference; two devices offline can
+            // pick the same one. Keep drawing the next number until it is free,
+            // so a clash never hits the unique index (which would 500 and wedge
+            // the device's sync). References::next advances the counter each call.
             $reference = $data['reference'] ?? null;
-            if (! $reference || Sale::withTrashed()->where('reference', $reference)->exists()) {
+            while (! $reference || Sale::withTrashed()->where('reference', $reference)->exists()) {
                 $reference = References::next('sale_prefix', $date);
             }
 
