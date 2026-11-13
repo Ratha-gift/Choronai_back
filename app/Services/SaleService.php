@@ -178,18 +178,34 @@ class SaleService
         });
     }
 
-    /** Deleting an unpaid sale puts its stock back and takes back its points. */
+    /**
+     * Deletes a sale and undoes everything it caused: its linked returns (their
+     * restock and point reversal), the sale's own stock, points and payments.
+     * Stock and points end up as if the sale had never been posted. The
+     * permission to do this (sales.delete / sales.cancel) is checked at the
+     * route; the sale and its returns are soft-deleted, so an Audit trail stays.
+     */
     public function delete(Sale $sale): void
     {
         DB::transaction(function () use ($sale) {
             $sale = Sale::whereKey($sale->id)->lockForUpdate()->firstOrFail();
-            // A paid sale keeps an accounting record; correct it with a return instead.
-            abort_if($sale->paid > 0, 409, 'This sale has a payment. Use a linked sale return to correct it.');
-            abort_if($sale->returned > 0, 409, 'This sale has a return and cannot be deleted.');
-            // Put the stock back and take back any points it earned.
+            $rewards = app(RewardService::class);
+
+            // Undo each linked return first: remove the stock it put back and
+            // the points it took away, then drop the return record.
+            foreach ($sale->returns()->lockForUpdate()->get() as $return) {
+                $this->stock->reverse('sale_return', $return->id);
+                $rewards->reverseReturnEntry($return->id);
+                $return->lines()->delete();
+                $return->delete();
+            }
+
+            // Put the sold stock back and take back any points the sale earned.
             $this->stock->reverse('sale', $sale->id);
-            app(RewardService::class)->reverseEarn($sale);
-            Audit::log('delete', 'sale', $sale->id, ['reference' => $sale->reference], null);
+            $rewards->reverseEarn($sale);
+            Audit::log('delete', 'sale', $sale->id, [
+                'reference' => $sale->reference, 'paid' => $sale->paid, 'returned' => $sale->returned,
+            ], null);
             $sale->payments()->delete();
             $sale->lines()->delete();
             $sale->delete();

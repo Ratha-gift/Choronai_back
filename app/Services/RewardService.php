@@ -75,4 +75,25 @@ class RewardService
         }
         $earned->delete();
     }
+
+    /**
+     * Undoes a return's point reversal, when the whole sale (with its returns)
+     * is deleted. The reversal entry's points/spend are negative, so
+     * decrementing by them adds the balance back.
+     */
+    public function reverseReturnEntry(string $returnId): void
+    {
+        $entry = RewardEntry::where('event_key', 'return:'.$returnId)->where('kind', 'reversal')->first();
+        if (! $entry) {
+            return;
+        }
+        if ($entry->member_card_id && $card = MemberCard::whereKey($entry->member_card_id)->lockForUpdate()->first()) {
+            $card->decrement('award_points', $entry->points);
+            $card->decrement('spent', (int) $entry->spent);
+        }
+        if ($entry->customer_id) {
+            Customer::whereKey($entry->customer_id)->decrement('award_points', $entry->points);
+        }
+        $entry->delete();
+    }
 }

@@ -133,9 +133,10 @@ class FrontendWorkspaceController extends Controller
             }
             foreach ($this->delta($before, $changes, FrontendWorkspace::key('sales')) as [$old, $row]) {
                 if (! $row) {
-                    // A removed sale: allowed only while nothing was paid or returned.
-                    abort_unless($old && (int) ($old['paid'] ?? 0) === 0 && (int) ($old['returned'] ?? 0) === 0,
-                        409, 'A paid sale cannot be deleted. Use Return Sale instead.');
+                    // A removed sale: admins/owners may delete it (route permission
+                    // sales.delete / sales.cancel). The service undoes its stock,
+                    // points, payments and any linked returns.
+                    abort_unless($old, 409, 'Unknown sale.');
                     $this->call($request, 'DELETE', "sales/{$old['id']}");
 
                     continue;
