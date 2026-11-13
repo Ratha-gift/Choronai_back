@@ -42,6 +42,21 @@ class PosTest extends ApiTestCase
         $this->assertSame(2230000, $card->spent);
     }
 
+    public function test_two_offline_sales_with_the_same_reference_get_a_fresh_number(): void
+    {
+        $this->openRegister();
+        $ref = 'SALE/'.now()->format('Y/m').'/0001';
+        // Two devices were offline and both picked the first reference.
+        $this->sell('MEAT-001', 1, ['reference' => $ref])->assertCreated()
+            ->assertJsonPath('reference', $ref);
+
+        // The clash is resolved with a fresh reference instead of a 500 that
+        // would wedge the device's sync forever.
+        $second = $this->sell('MEAT-001', 1, ['reference' => $ref])->assertCreated();
+        $this->assertNotSame($ref, $second->json('reference'));
+        $this->assertSame(2, \App\Models\Sale::count());
+    }
+
     public function test_overselling_follows_the_setting(): void
     {
         $this->openRegister();
