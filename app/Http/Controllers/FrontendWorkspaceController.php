@@ -125,7 +125,9 @@ class FrontendWorkspaceController extends Controller
                     }
                     if ($path !== 'receives' && $oldStatus === 'pending' && $status !== 'pending') {
                         $action = $status === 'rejected' ? 'reject' : ($path === 'adjustments' ? 'approve' : 'accept');
-                        if ($status === 'rejected' || in_array($status, ['approved', 'accepted', 'dispatched', 'completed'], true)) {
+                        // "received" here means the receiving branch accepted its
+                        // own transfer; accept() then dispatches and receives it.
+                        if ($status === 'rejected' || in_array($status, ['approved', 'accepted', 'dispatched', 'completed', 'received'], true)) {
                             $this->call($request, 'POST', "stock/{$path}/{$row['id']}/{$action}");
                         }
                     }
