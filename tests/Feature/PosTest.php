@@ -92,14 +92,52 @@ class PosTest extends ApiTestCase
         $this->assertArrayNotHasKey('remove_pin', \App\Support\Settings::all('pos'));
     }
 
-    public function test_posted_sales_cannot_be_deleted(): void
+    public function test_a_paid_sale_can_be_deleted_and_restores_stock_and_points(): void
     {
+        $card = MemberCard::where('card_no', '00001')->first();
+        $points = $card->award_points;
+        $spent = $card->spent;
+
         $this->openRegister();
-        $id = $this->sell('MEAT-001', 3)->json('id');
+        $id = $this->sell('MEAT-001', 2.5, ['memberCardNo' => '00001'])->json('id');
+        $this->assertSame(27.5, $this->stock('MEAT-001', 'CEN'));
 
         $this->actingAsUser('admin021');
-        $this->deleteJson("/api/v1/sales/{$id}")->assertStatus(409);
-        $this->assertSame(27.0, $this->stock('MEAT-001', 'CEN'));
+        $this->deleteJson("/api/v1/sales/{$id}")->assertNoContent();
+
+        // Stock, points and the sale itself are back to how they started.
+        $this->assertSame(30.0, $this->stock('MEAT-001', 'CEN'));
+        $this->assertNull(\App\Models\Sale::find($id));
+        $card->refresh();
+        $this->assertSame($points, $card->award_points);
+        $this->assertSame($spent, $card->spent);
+    }
+
+    public function test_deleting_a_returned_sale_cascades_and_rebalances_stock(): void
+    {
+        $card = MemberCard::where('card_no', '00001')->first();
+        $points = $card->award_points;
+
+        $this->openRegister();
+        $beef = $this->product('MEAT-001');
+        $id = $this->sell('MEAT-001', 3, ['memberCardNo' => '00001'])->json('id');
+
+        // Return 1 kg against the sale (restock): 30 - 3 + 1 = 28.
+        $this->postJson('/api/v1/sale-returns', [
+            'sale_id' => $id, 'warehouse_id' => $this->warehouse('CEN')->id,
+            'items' => [['product_id' => $beef->id, 'quantity' => 1, 'price' => $beef->price]],
+        ])->assertCreated();
+        $this->assertSame(28.0, $this->stock('MEAT-001', 'CEN'));
+
+        $this->actingAsUser('admin021');
+        $this->deleteJson("/api/v1/sales/{$id}")->assertNoContent();
+
+        // The sale and its return are gone and the stock is rebalanced to 30.
+        $this->assertSame(30.0, $this->stock('MEAT-001', 'CEN'));
+        $this->assertNull(\App\Models\Sale::find($id));
+        $this->assertSame(0, \App\Models\SaleReturn::where('sale_id', $id)->count());
+        // Earn and the return's reversal both undone: points back to the start.
+        $this->assertSame($points, $card->refresh()->award_points);
     }
 
     public function test_an_unpaid_sale_can_be_deleted_and_puts_stock_back(): void
