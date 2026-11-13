@@ -10,6 +10,7 @@ use App\Support\References;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * Stock Receive, Stock Issue (a transfer between warehouses) and Stock
@@ -143,12 +144,22 @@ class StockDocumentController extends Controller
         return $toWarehouse ? 'dispatched' : 'completed';
     }
 
-    /** Accept a pending Stock Issue: the goods leave the sending warehouse now. */
+    /**
+     * Accept a pending Stock Issue: the goods leave the sending warehouse now.
+     * A transfer may be accepted by the sending branch (it then dispatches and
+     * the receiving branch receives separately — keeping partial receipts and
+     * shortfall reports) or, in one step, by the receiving branch, which both
+     * dispatches it and receives the whole quantity into its own warehouse.
+     */
     public function accept(Request $request, string $id)
     {
         return DB::transaction(function () use ($request, $id) {
             $document = StockDocument::where('kind', 'issue')->whereKey($id)->lockForUpdate()->firstOrFail();
-            $request->user()->assertWarehouse($document->warehouse_id);
+            $user = $request->user();
+            $destination = $document->to_warehouse_id;
+            $maySend = $user->mayUseWarehouse($document->warehouse_id);
+            abort_unless($maySend || ($destination && $user->mayUseWarehouse($destination)),
+                403, 'This warehouse belongs to another branch.');
             if ($document->status !== 'pending') {
                 abort_if($document->status === 'rejected', 409, 'A rejected issue cannot be accepted.');
 
@@ -158,7 +169,29 @@ class StockDocumentController extends Controller
                 'product_id' => $line->product_id, 'quantity' => -1 * $line->quantity, 'expiry' => $line->expiry,
             ])->all();
             $this->stock->apply('stock_document', $document->id, 'issue_out', $document->warehouse_id, $changes, false);
-            $document->update(['status' => self::issuedStatus($document->to_warehouse_id)]);
+
+            // The receiving branch accepting its own incoming transfer completes
+            // it at once: the goods land in the destination warehouse now.
+            if ($destination && ! $maySend) {
+                $items = $document->lines->map(fn ($line) => [
+                    'product_id' => $line->product_id, 'quantity' => (float) $line->quantity,
+                    'price' => $line->price, 'expiry' => $line->expiry,
+                ])->all();
+                $receipt = StockDocument::create([
+                    ...$this->header(['warehouse_id' => $destination, 'items' => $items], 'receive'),
+                    'id' => (string) Str::uuid(), 'kind' => 'receive', 'workflow' => 'controlled',
+                    'transfer_id' => $document->id, 'created_by' => $user->id,
+                    'reference' => References::next(self::PREFIX['receive'], now()),
+                ]);
+                $this->saveLines($receipt, $items);
+                $document->update(['status' => 'received']);
+                Audit::log('accept', 'stock_issue', $document->id);
+                Audit::log('receive_transfer', 'stock_receive', $receipt->id, null, ['transfer_id' => $document->id]);
+
+                return $document->toApi();
+            }
+
+            $document->update(['status' => self::issuedStatus($destination)]);
             Audit::log('accept', 'stock_issue', $document->id);
 
             return $document->toApi();
