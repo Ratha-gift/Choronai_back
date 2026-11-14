@@ -196,7 +196,7 @@ class StockDocumentController extends Controller
                     ...$this->header(['warehouse_id' => $destination, 'items' => $items], 'receive'),
                     'id' => (string) Str::uuid(), 'kind' => 'receive', 'workflow' => 'controlled',
                     'transfer_id' => $document->id, 'created_by' => $user->id,
-                    'reference' => References::next(self::PREFIX['receive'], now()),
+                    'reference' => $this->uniqueReference(self::PREFIX['receive'], now()),
                 ]);
                 $this->saveLines($receipt, $items);
                 $document->update(['status' => 'received']);
@@ -218,7 +218,12 @@ class StockDocumentController extends Controller
     {
         return DB::transaction(function () use ($request, $id, $kind) {
             $document = StockDocument::where('kind', $kind)->whereKey($id)->lockForUpdate()->firstOrFail();
-            $request->user()->assertWarehouse($document->warehouse_id);
+            // The receiving branch of a transfer may reject it too, not only the
+            // sender, so allow whoever can use either warehouse (like accept()).
+            $user = $request->user();
+            $destination = $document->to_warehouse_id;
+            abort_unless($user->mayUseWarehouse($document->warehouse_id) || ($destination && $user->mayUseWarehouse($destination)),
+                403, 'This warehouse belongs to another branch.');
             if ($document->status === 'rejected') {
                 return $document->toApi();
             }
@@ -271,7 +276,7 @@ class StockDocumentController extends Controller
             $receipt = StockDocument::create([
                 ...$this->header(['warehouse_id' => $issue->to_warehouse_id, 'items' => $items, 'note' => $data['note'] ?? null], 'receive'),
                 'id' => $data['id'], 'kind' => 'receive', 'workflow' => 'controlled', 'transfer_id' => $issue->id,
-                'reference' => References::next(self::PREFIX['receive'], now()), 'created_by' => $request->user()->id,
+                'reference' => $this->uniqueReference(self::PREFIX['receive'], now()), 'created_by' => $request->user()->id,
             ]);
             $this->saveLines($receipt, $items);
             $complete = $sent->every(fn ($line) => round($received[$line->product_id] ?? 0, 3) >= (float) $line->quantity);
@@ -321,7 +326,7 @@ class StockDocumentController extends Controller
             $return = StockDocument::create([
                 ...$this->header(['warehouse_id' => $issue->warehouse_id, 'items' => $items, 'note' => $data['note']], 'receive'),
                 'id' => $data['id'], 'kind' => 'receive', 'workflow' => 'controlled', 'short_of' => $issue->id,
-                'reference' => References::next(self::PREFIX['receive'], now()), 'created_by' => $request->user()->id,
+                'reference' => $this->uniqueReference(self::PREFIX['receive'], now()), 'created_by' => $request->user()->id,
             ]);
             $this->saveLines($return, $items);
             $issue->update(['status' => 'short_received']);
@@ -358,6 +363,21 @@ class StockDocumentController extends Controller
         ]);
 
         return $data;
+    }
+
+    /**
+     * A reference that is not taken yet. After a database clear/re-import the
+     * counter can trail the existing documents, so keep drawing the next number
+     * until it is free instead of hitting the unique index (a 500 that wedges
+     * the device's sync).
+     */
+    private function uniqueReference(string $prefixKey, Carbon $at): string
+    {
+        do {
+            $reference = References::next($prefixKey, $at);
+        } while (StockDocument::withTrashed()->where('reference', $reference)->exists());
+
+        return $reference;
     }
 
     private function header(array $data, string $kind): array
