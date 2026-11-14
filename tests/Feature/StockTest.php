@@ -120,6 +120,32 @@ class StockTest extends ApiTestCase
         $this->assertDatabaseHas('stock_documents', ['id' => $id, 'status' => 'rejected']);
     }
 
+    public function test_a_one_step_accept_survives_a_stale_receive_counter(): void
+    {
+        $pork = $this->product('MEAT-002');
+        $make = fn () => $this->postJson('/api/v1/stock/issues', [
+            'warehouseId' => $this->warehouse('MAIN')->id,
+            'toWarehouseId' => $this->warehouse('CEN')->id,
+            'status' => 'pending',
+            'items' => [['productId' => $pork->id, 'quantity' => 1]],
+        ])->assertCreated()->json('id');
+        $a = $make();
+        $b = $make();
+
+        $this->branchManager();
+        $this->actingAsUser('branchmgr');
+        $this->postJson("/api/v1/stock/issues/{$a}/accept")->assertOk();
+        // The receive counter trails the documents, as after a DB re-import; the
+        // next number clashes with an existing receipt and must not 500.
+        \Illuminate\Support\Facades\DB::table('reference_counters')->update(['last_number' => 0]);
+        $this->postJson("/api/v1/stock/issues/{$b}/accept")->assertOk();
+
+        $this->assertDatabaseHas('stock_documents', ['id' => $a, 'status' => 'received']);
+        $this->assertDatabaseHas('stock_documents', ['id' => $b, 'status' => 'received']);
+        $refs = \App\Models\StockDocument::where('kind', 'receive')->pluck('reference');
+        $this->assertSame($refs->count(), $refs->unique()->count(), 'receive references stay unique');
+    }
+
     public function test_short_transfer_sends_the_rest_back(): void
     {
         $pork = $this->product('MEAT-002');
