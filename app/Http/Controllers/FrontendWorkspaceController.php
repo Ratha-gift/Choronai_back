@@ -128,7 +128,9 @@ class FrontendWorkspaceController extends Controller
                         // "received" here means the receiving branch accepted its
                         // own transfer; accept() then dispatches and receives it.
                         if ($status === 'rejected' || in_array($status, ['approved', 'accepted', 'dispatched', 'completed', 'received'], true)) {
-                            $this->call($request, 'POST', "stock/{$path}/{$row['id']}/{$action}");
+                            // Pass the intended status so accept() knows whether
+                            // to receive the transfer in one step or only dispatch.
+                            $this->call($request, 'POST', "stock/{$path}/{$row['id']}/{$action}", ['status' => $status]);
                         }
                     }
                 }

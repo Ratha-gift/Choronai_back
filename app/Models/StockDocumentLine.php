@@ -10,5 +10,5 @@ class StockDocumentLine extends Eloquent
 
     protected $guarded = [];
 
-    protected $casts = ['quantity' => 'float', 'expiry' => 'date:Y-m-d'];
+    protected $casts = ['quantity' => 'float', 'current_stock' => 'float', 'expiry' => 'date:Y-m-d'];
 }

@@ -239,7 +239,7 @@ class WorkspaceTest extends ApiTestCase
         $this->assertNull(\App\Models\Sale::find($unpaid));
     }
 
-    public function test_stock_issue_waits_for_accept_then_transfer_is_received(): void
+    public function test_owner_accepting_a_pending_transfer_completes_it_in_one_step(): void
     {
         $this->actingAsUser('admin021');
         $beef = $this->product('MEAT-001');
@@ -251,22 +251,14 @@ class WorkspaceTest extends ApiTestCase
         ]]);
         $this->assertSame(70.0, $this->stock('MEAT-001', 'MAIN'), 'pending issues do not move stock');
 
+        // The owner (all branches) can receive at the destination, so accepting
+        // deducts the sending warehouse and takes it into the destination at once.
         $this->commit('choronai-stockIssues-v1', fn ($rows) => collect($rows)
-            ->map(fn ($r) => $r['id'] === $issue ? [...$r, 'status' => 'accepted', 'stockApplied' => true] : $r)->all());
+            ->map(fn ($r) => $r['id'] === $issue ? [...$r, 'status' => 'received', 'stockApplied' => true] : $r)->all());
         $this->assertSame(60.0, $this->stock('MEAT-001', 'MAIN'));
-        $this->assertSame(30.0, $this->stock('MEAT-001', 'CEN'), 'in transit until received');
-
-        $this->commitMany([
-            'choronai-stockReceives-v1' => fn ($rows) => [...$rows, [
-                'id' => (string) Str::uuid(), 'transferId' => $issue, 'date' => now()->toIso8601String(),
-                'branch' => 'Central', 'warehouse' => 'Central branch', 'referenceTo' => 'SIS/TEST/1',
-                'items' => [['productId' => $beef->id, 'quantity' => 10, 'price' => 25000]],
-            ]],
-            'choronai-stockIssues-v1' => fn ($rows) => collect($rows)
-                ->map(fn ($r) => $r['id'] === $issue ? [...$r, 'status' => 'received'] : $r)->all(),
-        ]);
         $this->assertSame(40.0, $this->stock('MEAT-001', 'CEN'));
         $this->assertDatabaseHas('stock_documents', ['id' => $issue, 'status' => 'received']);
+        $this->assertDatabaseHas('stock_documents', ['transfer_id' => $issue, 'kind' => 'receive']);
     }
 
     public function test_receiving_branch_accepts_a_transfer_in_one_step_from_the_browser(): void
