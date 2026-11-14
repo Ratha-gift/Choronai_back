@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Product;
 use App\Models\StockDocument;
+use App\Models\StockLevel;
 use App\Services\StockService;
 use App\Support\Audit;
 use App\Support\References;
@@ -47,13 +48,21 @@ class StockDocumentController extends Controller
         $request->user()->assertWarehouse($data['warehouse_id']);
         $document = DB::transaction(function () use ($kind, $data, $request) {
             $date = Carbon::parse($data['date'] ?? now());
+            // Offline documents carry a client reference; two devices offline
+            // can pick the same one. Keep drawing the next number until it is
+            // free, so a clash never 422s ("reference has already been taken")
+            // and wedges the device's sync. References::next advances each call.
+            $reference = $data['reference'] ?? null;
+            while (! $reference || StockDocument::withTrashed()->where('reference', $reference)->exists()) {
+                $reference = References::next(self::PREFIX[$kind], $date);
+            }
             $document = StockDocument::create([
                 ...$this->header($data, $kind),
                 // The browser's row id, so later edits and approvals find it.
                 ...(isset($data['id']) ? ['id' => $data['id']] : []),
                 'workflow' => 'controlled',
                 'kind' => $kind,
-                'reference' => $data['reference'] ?? References::next(self::PREFIX[$kind], $date),
+                'reference' => $reference,
                 'created_by' => $request->user()->id,
             ]);
             $this->saveLines($document, $data['items']);
@@ -146,10 +155,11 @@ class StockDocumentController extends Controller
 
     /**
      * Accept a pending Stock Issue: the goods leave the sending warehouse now.
-     * A transfer may be accepted by the sending branch (it then dispatches and
-     * the receiving branch receives separately — keeping partial receipts and
-     * shortfall reports) or, in one step, by the receiving branch, which both
-     * dispatches it and receives the whole quantity into its own warehouse.
+     * A transfer is completed in one step (dispatch + receive the whole
+     * quantity) when the acceptor means to receive it — the receiving branch,
+     * or an all-branches user such as the owner accepting with status
+     * "received". A sender who only dispatches (status "accepted") leaves the
+     * goods in transit for a separate receipt, so short / partial receipts work.
      */
     public function accept(Request $request, string $id)
     {
@@ -160,6 +170,10 @@ class StockDocumentController extends Controller
             $maySend = $user->mayUseWarehouse($document->warehouse_id);
             abort_unless($maySend || ($destination && $user->mayUseWarehouse($destination)),
                 403, 'This warehouse belongs to another branch.');
+            // Complete the transfer in one step when the acceptor means to
+            // receive it ("received") or cannot send it (the receiving branch);
+            // a sender asking only to dispatch leaves the goods in transit.
+            $wantsReceive = $request->input('status') === 'received' || ! $maySend;
             if ($document->status !== 'pending') {
                 abort_if($document->status === 'rejected', 409, 'A rejected issue cannot be accepted.');
 
@@ -170,9 +184,10 @@ class StockDocumentController extends Controller
             ])->all();
             $this->stock->apply('stock_document', $document->id, 'issue_out', $document->warehouse_id, $changes, false);
 
-            // The receiving branch accepting its own incoming transfer completes
-            // it at once: the goods land in the destination warehouse now.
-            if ($destination && ! $maySend) {
+            // Whoever can receive at the destination and means to (the receiving
+            // branch, or an all-branches user such as the owner accepting it)
+            // completes the transfer at once: the goods land there now.
+            if ($destination && $wantsReceive && $user->mayUseWarehouse($destination)) {
                 $items = $document->lines->map(fn ($line) => [
                     'product_id' => $line->product_id, 'quantity' => (float) $line->quantity,
                     'price' => $line->price, 'expiry' => $line->expiry,
@@ -321,7 +336,10 @@ class StockDocumentController extends Controller
         $data = $request->validate([
             ...($id ? [] : ['id' => ['sometimes', 'uuid', 'unique:stock_documents,id']]),
             'date' => ['nullable', 'date'],
-            'reference' => ['nullable', 'string', 'max:60', 'unique:stock_documents,reference'.($id ? ",{$id}" : '')],
+            // On create a clash is resolved by drawing a fresh number (see
+            // store()), so no unique rule here; on update the reference must
+            // stay unique among other rows.
+            'reference' => ['nullable', 'string', 'max:60', ...($id ? ["unique:stock_documents,reference,{$id}"] : [])],
             'warehouse_id' => ['required', 'uuid', 'exists:warehouses,id'],
             // An issue without a destination takes goods out of the shop (no transfer).
             'to_warehouse_id' => [$kind === 'issue' ? 'nullable' : 'prohibited', 'uuid', 'exists:warehouses,id', 'different:warehouse_id'],
@@ -365,6 +383,13 @@ class StockDocumentController extends Controller
     private function saveLines(StockDocument $document, array $items): void
     {
         $products = Product::whereIn('id', array_column($items, 'product_id'))->get()->keyBy('id');
+        // Adjustments record the stock on hand before the change (captured now,
+        // before this document is applied), so the detail shows Current Stock.
+        $before = $document->kind === 'adjustment'
+            ? StockLevel::where('warehouse_id', $document->warehouse_id)
+                ->whereIn('product_id', array_column($items, 'product_id'))
+                ->pluck('quantity', 'product_id')
+            : collect();
         $lines = array_map(fn ($item) => [
             'product_id' => $item['product_id'],
             'code' => $products[$item['product_id']]->sku,
@@ -373,6 +398,9 @@ class StockDocumentController extends Controller
             'quantity' => round((float) $item['quantity'], 3),
             'price' => (int) ($item['price'] ?? 0),
             'type' => $item['type'] ?? null,
+            'current_stock' => $document->kind === 'adjustment'
+                ? round((float) ($before[$item['product_id']] ?? 0), 3)
+                : null,
             'description' => $item['description'] ?? '',
             'expiry' => $item['expiry'] ?? null,
         ], $items);

@@ -149,7 +149,11 @@ class StockTest extends ApiTestCase
         $id = $this->postJson('/api/v1/stock/adjustments', [
             'warehouseId' => $this->warehouse('CEN')->id,
             'items' => [['productId' => $catfish->id, 'quantity' => 4, 'type' => 'subtraction', 'description' => 'Spoiled']],
-        ])->assertCreated()->assertJsonPath('items.0.description', 'Spoiled')->json('id');
+        ])->assertCreated()
+            ->assertJsonPath('items.0.description', 'Spoiled')
+            // The stock on hand before the change, for the detail's Current Stock.
+            ->assertJsonPath('items.0.currentStock', 30)
+            ->json('id');
 
         $this->assertSame(30.0, $this->stock('FISH-001', 'CEN'));
         $this->actingAsUser('cashier01');
@@ -158,6 +162,25 @@ class StockTest extends ApiTestCase
         $this->postJson("/api/v1/stock/adjustments/{$id}/approve")->assertOk();
         $this->postJson("/api/v1/stock/adjustments/{$id}/approve")->assertOk();
         $this->assertSame(26.0, $this->stock('FISH-001', 'CEN'));
+    }
+
+    public function test_two_offline_adjustments_with_the_same_reference_get_a_fresh_number(): void
+    {
+        $catfish = $this->product('FISH-001');
+        $line = fn () => [
+            'warehouseId' => $this->warehouse('CEN')->id,
+            'reference' => 'QA/2026/11/0003',
+            'items' => [['productId' => $catfish->id, 'quantity' => 1, 'type' => 'subtraction']],
+        ];
+
+        $first = $this->postJson('/api/v1/stock/adjustments', $line())
+            ->assertCreated()->assertJsonPath('reference', 'QA/2026/11/0003')->json('id');
+        // Same reference again (a second offline device): a clash must not 422.
+        $second = $this->postJson('/api/v1/stock/adjustments', $line())
+            ->assertCreated()->json();
+
+        $this->assertNotSame($first, $second['id']);
+        $this->assertNotSame('QA/2026/11/0003', $second['reference']);
     }
 
     public function test_combo_products_move_their_components(): void
