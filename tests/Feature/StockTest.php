@@ -101,6 +101,25 @@ class StockTest extends ApiTestCase
         $this->assertSame(70.0, $this->stock('MEAT-002', 'MAIN'));
     }
 
+    public function test_receiving_branch_can_reject_a_transfer(): void
+    {
+        $pork = $this->product('MEAT-002');
+        $id = $this->postJson('/api/v1/stock/issues', [
+            'warehouseId' => $this->warehouse('MAIN')->id,
+            'toWarehouseId' => $this->warehouse('CEN')->id,
+            'status' => 'pending',
+            'items' => [['productId' => $pork->id, 'quantity' => 10]],
+        ])->assertCreated()->json('id');
+
+        // The Central-branch manager cannot use the Main warehouse but may still
+        // reject an incoming transfer; no stock moves.
+        $this->branchManager();
+        $this->actingAsUser('branchmgr');
+        $this->postJson("/api/v1/stock/issues/{$id}/reject")->assertOk();
+        $this->assertSame(70.0, $this->stock('MEAT-002', 'MAIN'));
+        $this->assertDatabaseHas('stock_documents', ['id' => $id, 'status' => 'rejected']);
+    }
+
     public function test_short_transfer_sends_the_rest_back(): void
     {
         $pork = $this->product('MEAT-002');

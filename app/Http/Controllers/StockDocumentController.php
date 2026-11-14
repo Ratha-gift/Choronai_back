@@ -218,7 +218,12 @@ class StockDocumentController extends Controller
     {
         return DB::transaction(function () use ($request, $id, $kind) {
             $document = StockDocument::where('kind', $kind)->whereKey($id)->lockForUpdate()->firstOrFail();
-            $request->user()->assertWarehouse($document->warehouse_id);
+            // The receiving branch of a transfer may reject it too, not only the
+            // sender, so allow whoever can use either warehouse (like accept()).
+            $user = $request->user();
+            $destination = $document->to_warehouse_id;
+            abort_unless($user->mayUseWarehouse($document->warehouse_id) || ($destination && $user->mayUseWarehouse($destination)),
+                403, 'This warehouse belongs to another branch.');
             if ($document->status === 'rejected') {
                 return $document->toApi();
             }
