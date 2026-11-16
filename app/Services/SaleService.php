@@ -135,7 +135,11 @@ class SaleService
         return DB::transaction(function () use ($data, $warehouseId) {
             $register = Register::where('user_id', auth()->id())->where('status', 'open')->lockForUpdate()->first();
             abort_unless($register, 409, 'Open a register before issuing a refund.');
-            abort_unless($register->warehouse_id === $warehouseId, 422, 'Refund warehouse must match the open register.');
+            // The owner refunds across branches: the goods go back to the sale's
+            // own warehouse while the cash comes from whichever till is open. A
+            // cashier still refunds only at their own register's warehouse.
+            abort_unless(auth()->user()->isOwner() || $register->warehouse_id === $warehouseId, 422,
+                'Refund warehouse must match the open register.');
             $date = isset($data['date']) ? Carbon::parse($data['date']) : now();
             $lines = $this->lines($data['items']);
             $total = (int) round(collect($lines)->sum(fn ($line) => $line['quantity'] * $line['price']));
