@@ -127,6 +127,8 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::get('sales/{sale}', [SaleController::class, 'show'])->middleware('perm:sales.view,sales.pos');
     Route::delete('sales/{sale}', [SaleController::class, 'destroy'])->middleware('perm:sales.delete,sales.cancel');
     Route::post('sales/{sale}/review', [SaleController::class, 'review'])->middleware('perm:sales.edit');
+    // Re-cut a posted sale; the controller limits this to the owner.
+    Route::put('sales/{sale}', [SaleController::class, 'update'])->middleware('perm:sales.edit');
     Route::post('sales/{sale}/payments', [SaleController::class, 'addPayment'])->middleware('perm:sales.payments');
     // Correct a payment's method (Cash → QR …); the controller limits staff to their own sales.
     Route::patch('sales/{sale}/payments/{payment}', [SaleController::class, 'updatePayment'])->middleware('perm:sales.pos,sales.payments');

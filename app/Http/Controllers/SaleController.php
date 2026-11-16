@@ -101,6 +101,15 @@ class SaleController extends Controller
         return $sale->load('lines', 'payments', 'warehouse', 'customer', 'creator', 'memberCard')->toApi();
     }
 
+    /** Re-cut a posted sale (owner only): items, customer, discount, payment. */
+    public function update(Request $request, Sale $sale)
+    {
+        abort_unless($request->user()->isOwner(), 403, 'Only the owner may edit a posted sale.');
+        $data = $request->validate(self::rules());
+
+        return $this->sales->updateSale($sale, $data)->toApi();
+    }
+
     /** Manager marks an offline sale as checked. */
     public function review(Sale $sale)
     {

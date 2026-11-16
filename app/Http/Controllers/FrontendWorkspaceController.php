@@ -146,8 +146,22 @@ class FrontendWorkspaceController extends Controller
                     continue;
                 }
                 if ($old) {
-                    abort_unless($this->same($old, $row, ['items', 'warehouse', 'customer', 'discount', 'shipping', 'order_tax']), 409,
-                        'A posted sale cannot be changed. Use Return Sale instead.');
+                    if (! $this->same($old, $row, ['items', 'warehouse', 'customer', 'discount', 'shipping', 'order_tax'])) {
+                        // The owner may re-cut a posted sale (items, customer,
+                        // discount …); everyone else must use Return Sale instead.
+                        abort_unless($request->user()->isOwner(), 409, 'A posted sale cannot be changed. Use Return Sale instead.');
+                        $this->call($request, 'PUT', "sales/{$row['id']}", [
+                            ...collect($row)->only(['items', 'order_tax', 'discount', 'shipping', 'note'])->all(),
+                            'customer_id' => $row['customer_id'] ?? Models\Customer::where('name', $row['customer'] ?? '')->value('id'),
+                            'member_card_no' => $row['member_card'] ?? null,
+                            'payment' => ['method' => $row['payment_method'] ?? 'Cash', 'tendered_riel' => (int) ($row['paid'] ?? 0)],
+                            'payments' => collect($row['payments'] ?? [])->map(fn ($part) => [
+                                'method' => $part['method'], 'amount' => (int) $part['amount'],
+                            ])->all(),
+                        ]);
+
+                        continue;
+                    }
                     // Payments added later (Sales → Add Payment).
                     $known = collect($old['payments'] ?? [])->pluck('id')->map(fn ($id) => (string) $id)->all();
                     $oldMethods = collect($old['payments'] ?? [])->keyBy(fn ($p) => (string) $p['id']);
