@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Payment;
 use App\Models\Sale;
 use App\Services\SaleService;
 use App\Support\Audit;
@@ -73,6 +74,31 @@ class SaleController extends Controller
 
             return $sale->load('lines', 'payments', 'warehouse', 'customer', 'creator', 'memberCard')->toApi();
         });
+    }
+
+    /**
+     * Correct how a payment was taken (Cash → QR, …) without touching the
+     * amount. The owner may fix any sale; a staff member only their own.
+     */
+    public function updatePayment(Request $request, Sale $sale, Payment $payment)
+    {
+        abort_unless($payment->sale_id === $sale->id, 404);
+        $user = $request->user();
+        abort_unless($user->isOwner() || $sale->created_by === $user->id, 403,
+            'You can only change payments on your own sales.');
+        $data = $request->validate([
+            'method' => ['required', 'in:Cash,ABA / KHQR,Card,Bank transfer,Delivery,Other'],
+        ]);
+        $before = $payment->method;
+        $payment->update(['method' => $data['method']]);
+        // A single-payment sale mirrors the method on the sale (receipts, filters).
+        if ($sale->payments()->count() === 1) {
+            $sale->update(['payment_method' => $data['method']]);
+        }
+        Audit::log('update_payment_method', 'sale', $sale->id,
+            ['method' => $before], ['method' => $data['method']]);
+
+        return $sale->load('lines', 'payments', 'warehouse', 'customer', 'creator', 'memberCard')->toApi();
     }
 
     /** Manager marks an offline sale as checked. */

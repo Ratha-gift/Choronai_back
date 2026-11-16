@@ -150,10 +150,21 @@ class FrontendWorkspaceController extends Controller
                         'A posted sale cannot be changed. Use Return Sale instead.');
                     // Payments added later (Sales → Add Payment).
                     $known = collect($old['payments'] ?? [])->pluck('id')->map(fn ($id) => (string) $id)->all();
+                    $oldMethods = collect($old['payments'] ?? [])->keyBy(fn ($p) => (string) $p['id']);
                     foreach ($row['payments'] ?? [] as $payment) {
                         if (! in_array((string) $payment['id'], $known, true) && (int) ($payment['amount'] ?? 0) > 0) {
                             $this->call($request, 'POST', "sales/{$row['id']}/payments", [
                                 'method' => $payment['method'], 'amount' => (int) $payment['amount'], 'paid_at' => $payment['date'] ?? null,
+                            ]);
+
+                            continue;
+                        }
+                        // The method of an existing payment was corrected (Sales →
+                        // View Payments): Cash → QR, … The amount is untouched.
+                        $prior = $oldMethods->get((string) $payment['id']);
+                        if ($prior && ($prior['method'] ?? null) !== ($payment['method'] ?? null)) {
+                            $this->call($request, 'PATCH', "sales/{$row['id']}/payments/{$payment['id']}", [
+                                'method' => $payment['method'],
                             ]);
                         }
                     }
