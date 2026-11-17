@@ -155,6 +155,41 @@ class PosTest extends ApiTestCase
         $this->assertSame($points, $card->refresh()->award_points);
     }
 
+    public function test_the_owner_refunds_a_sale_from_another_warehouse(): void
+    {
+        $this->actingAsUser('admin021');
+        $beef = $this->product('MEAT-001');
+
+        // A sale rung up at Central (CEN): 30 - 3 = 27.
+        $register = $this->openRegister('CEN');
+        $id = $this->sell('MEAT-001', 3)->json('id');
+        $this->postJson("/api/v1/registers/{$register}/close", ['countedRiel' => 0])->assertOk();
+
+        // The owner, now on a Main-branch till, refunds 1 kg of that CEN sale.
+        $this->openRegister('MAIN');
+        $this->postJson('/api/v1/sale-returns', [
+            'sale_id' => $id, 'warehouse_id' => $this->warehouse('CEN')->id,
+            'items' => [['product_id' => $beef->id, 'quantity' => 1, 'price' => $beef->price]],
+        ])->assertCreated();
+
+        // The goods go back to Central (27 + 1 = 28), not to Main.
+        $this->assertSame(28.0, $this->stock('MEAT-001', 'CEN'));
+        $this->assertSame(70.0, $this->stock('MEAT-001', 'MAIN'));
+    }
+
+    public function test_a_cashier_still_refunds_only_at_their_register_warehouse(): void
+    {
+        $beef = $this->product('MEAT-001');
+        $this->openRegister('CEN');
+        $id = $this->sell('MEAT-001', 2)->json('id');
+
+        // A cashier whose till is at Central cannot refund to the Main warehouse.
+        $this->postJson('/api/v1/sale-returns', [
+            'sale_id' => $id, 'warehouse_id' => $this->warehouse('MAIN')->id,
+            'items' => [['product_id' => $beef->id, 'quantity' => 1, 'price' => $beef->price]],
+        ])->assertStatus(422);
+    }
+
     public function test_an_unpaid_sale_can_be_deleted_and_puts_stock_back(): void
     {
         $this->openRegister();
