@@ -130,6 +130,94 @@ class SaleService
         });
     }
 
+    /**
+     * Re-cut a posted sale in place (owner only): fix its items, customer,
+     * discount or payment. The old stock and points are reversed and the new
+     * ones applied, while the sale keeps its id and reference so the invoice
+     * number never changes. A sale with linked returns is left alone — undo
+     * the returns first.
+     */
+    public function updateSale(Sale $sale, array $data): Sale
+    {
+        return DB::transaction(function () use ($sale, $data) {
+            $sale = Sale::whereKey($sale->id)->lockForUpdate()->firstOrFail();
+            abort_if($sale->returns()->exists(), 409, 'Remove the linked returns before editing this sale.');
+
+            $rewards = app(RewardService::class);
+            $before = ['reference' => $sale->reference, 'grand_total' => $sale->grand_total, 'paid' => $sale->paid];
+
+            // Undo the old sale's stock and points, then clear its lines/payments.
+            $this->stock->reverse('sale', $sale->id);
+            $rewards->reverseEarn($sale);
+            $sale->payments()->delete();
+            $sale->lines()->delete();
+
+            // Recompute from the edited data (the shape create() uses). The date,
+            // warehouse, register and reference are kept as they were.
+            $lines = $this->lines($data['items']);
+            $total = (int) round(collect($lines)->sum(fn ($line) => $line['quantity'] * $line['price']));
+            $orderTax = (int) ($data['order_tax'] ?? 0);
+            $discount = (int) ($data['discount'] ?? 0);
+            $shipping = (int) ($data['shipping'] ?? 0);
+            $grandTotal = max(0, $total + $orderTax - $discount + $shipping);
+
+            $payment = $data['payment'] ?? [];
+            $rate = (float) ($payment['rate'] ?? Settings::usdRate());
+            $tendered = (int) round(($payment['tendered_riel'] ?? 0) + ($payment['tendered_usd'] ?? 0) * $rate);
+            $parts = array_values(array_filter($data['payments'] ?? [], fn ($part) => (int) $part['amount'] > 0));
+            $paid = min($parts ? (int) collect($parts)->sum('amount') : $tendered, $grandTotal);
+
+            $card = isset($data['member_card_no'])
+                ? MemberCard::where('card_no', $data['member_card_no'])->lockForUpdate()->first()
+                : null;
+            abort_if($card?->expiry && $card->expiry->endOfDay()->isPast(), 422, 'Member card has expired.');
+            abort_if($card && isset($data['customer_id']) && $data['customer_id'] !== $card->customer_id, 422, 'Card belongs to a different customer.');
+            $customerId = $data['customer_id'] ?? $card?->customer_id;
+
+            $sale->update([
+                'customer_id' => $customerId,
+                'member_card_id' => $card?->id,
+                'total' => $total,
+                'order_tax' => $orderTax,
+                'discount' => $discount,
+                'shipping' => $shipping,
+                'grand_total' => $grandTotal,
+                'paid' => $paid,
+                'payment_status' => $paid >= $grandTotal ? 'paid' : ($paid > 0 ? 'partial' : 'due'),
+                'payment_method' => $payment['method'] ?? 'Cash',
+                'note' => $data['note'] ?? null,
+            ]);
+            $sale->lines()->createMany($lines);
+
+            // One payment row per method of a split payment; a credit sale has none.
+            $left = $paid;
+            foreach ($parts ?: ($paid > 0 ? [['method' => $payment['method'] ?? 'Cash', 'amount' => $paid]] : []) as $part) {
+                $amount = min((int) $part['amount'], $left);
+                $left -= $amount;
+                $sale->payments()->create([
+                    'method' => $part['method'],
+                    'amount' => $amount,
+                    'tendered_riel' => $parts ? $amount : (int) ($payment['tendered_riel'] ?? 0),
+                    'tendered_usd' => $parts ? 0 : (float) ($payment['tendered_usd'] ?? 0),
+                    'rate' => $rate,
+                    'paid_at' => $sale->date,
+                    'created_by' => $sale->created_by,
+                ]);
+            }
+
+            // An owner correction is never blocked by stock (allow negative).
+            $this->stock->apply('sale', $sale->id, 'sale', $sale->warehouse_id, array_map(
+                fn ($line) => ['product_id' => $line['product_id'], 'quantity' => -$line['quantity']],
+                $lines,
+            ), true);
+
+            $rewards->earn($sale->refresh());
+            Audit::log('update', 'sale', $sale->id, $before, ['grand_total' => $grandTotal, 'paid' => $paid]);
+
+            return $sale->load('lines', 'payments', 'warehouse', 'customer', 'creator', 'memberCard');
+        });
+    }
+
     public function createReturn(array $data, string $warehouseId): SaleReturn
     {
         return DB::transaction(function () use ($data, $warehouseId) {

@@ -207,6 +207,57 @@ class WorkspaceTest extends ApiTestCase
         $this->assertDatabaseMissing('payments', ['sale_id' => $sale]);
     }
 
+    public function test_a_paid_sale_can_have_its_payment_method_corrected(): void
+    {
+        $this->actingAsUser('admin021');
+        $beef = $this->product('MEAT-001');
+        $this->commit('choronai-registers-v1', fn ($rows) => [...$rows, ['id' => (string) Str::uuid(),
+            'status' => 'open', 'warehouse' => 'Central branch', 'cashInHand' => 0, 'openedAt' => now()->toIso8601String()]]);
+
+        $sale = (string) Str::uuid();
+        $result = $this->commit('choronai-sales-v1', fn ($rows) => [...$rows, [
+            'id' => $sale, 'reference' => 'SALE/TEST/PAY', 'date' => now()->toIso8601String(), 'warehouse' => 'Central branch',
+            'items' => [['productId' => $beef->id, 'quantity' => 1, 'price' => 32000]],
+            'paid' => 32000, 'paymentMethod' => 'Cash',
+            'payments' => [['id' => 'P1', 'method' => 'Cash', 'amount' => 32000]],
+        ]]);
+        $this->assertDatabaseHas('payments', ['sale_id' => $sale, 'method' => 'Cash', 'amount' => 32000]);
+
+        // The backend assigns the real payment id; the browser edits that row.
+        $saved = collect($result['data']['choronai-sales-v1'])->firstWhere('id', $sale);
+        $paymentId = $saved['payments'][0]['id'];
+
+        // Sales → View Payments: Cash → QR. The amount is untouched.
+        $this->commit('choronai-sales-v1', fn ($rows) => collect($rows)->map(fn ($r) => $r['id'] === $sale
+            ? [...$r, 'paymentMethod' => 'ABA / KHQR',
+                'payments' => [['id' => $paymentId, 'method' => 'ABA / KHQR', 'amount' => 32000]]] : $r)->values()->all());
+
+        $this->assertDatabaseHas('payments', ['id' => $paymentId, 'sale_id' => $sale, 'method' => 'ABA / KHQR', 'amount' => 32000]);
+        $this->assertDatabaseHas('sales', ['id' => $sale, 'payment_method' => 'ABA / KHQR']);
+    }
+
+    public function test_a_cashier_cannot_change_another_users_sale_payment(): void
+    {
+        $this->actingAsUser('admin021');
+        $beef = $this->product('MEAT-001');
+        $this->commit('choronai-registers-v1', fn ($rows) => [...$rows, ['id' => (string) Str::uuid(),
+            'status' => 'open', 'warehouse' => 'Central branch', 'cashInHand' => 0, 'openedAt' => now()->toIso8601String()]]);
+        $sale = (string) Str::uuid();
+        $result = $this->commit('choronai-sales-v1', fn ($rows) => [...$rows, [
+            'id' => $sale, 'reference' => 'SALE/TEST/OWN', 'date' => now()->toIso8601String(), 'warehouse' => 'Central branch',
+            'items' => [['productId' => $beef->id, 'quantity' => 1, 'price' => 32000]],
+            'paid' => 32000, 'paymentMethod' => 'Cash',
+            'payments' => [['id' => 'P1', 'method' => 'Cash', 'amount' => 32000]],
+        ]]);
+        $paymentId = collect($result['data']['choronai-sales-v1'])->firstWhere('id', $sale)['payments'][0]['id'];
+
+        // A cashier may not touch a sale they did not create.
+        $this->actingAsUser('cashier01');
+        $this->patchJson("/api/v1/sales/{$sale}/payments/{$paymentId}", ['method' => 'ABA / KHQR'])
+            ->assertStatus(403);
+        $this->assertDatabaseHas('payments', ['id' => $paymentId, 'method' => 'Cash']);
+    }
+
     public function test_an_admin_can_remove_a_paid_or_unpaid_sale_from_the_browser(): void
     {
         $this->actingAsUser('admin021');
@@ -396,10 +447,57 @@ class WorkspaceTest extends ApiTestCase
         $this->assertDatabaseHas('sales', ['id' => $sale, 'paid' => 20000, 'payment_status' => 'partial']);
         $saved = collect($result['data']['choronai-sales-v1'])->firstWhere('id', $sale);
         $this->assertCount(1, $saved['payments']);
+    }
 
-        // Changing the items of a posted sale is refused (use Return Sale).
+    public function test_the_owner_can_re_cut_a_posted_sale(): void
+    {
+        $this->actingAsUser('admin021');
+        $beef = $this->product('MEAT-001');
+        $this->commit('choronai-registers-v1', fn ($rows) => [...$rows, ['id' => (string) Str::uuid(),
+            'status' => 'open', 'warehouse' => 'Central branch', 'cashInHand' => 0, 'openedAt' => now()->toIso8601String()]]);
+
+        $sale = (string) Str::uuid();
+        $this->commit('choronai-sales-v1', fn ($rows) => [...$rows, [
+            'id' => $sale, 'reference' => 'SALE/TEST/EDIT', 'date' => now()->toIso8601String(), 'warehouse' => 'Central branch',
+            'items' => [['productId' => $beef->id, 'quantity' => 2, 'price' => 32000]],
+            'paid' => 64000, 'paymentMethod' => 'Cash', 'grandTotal' => 64000,
+            'payments' => [['id' => 'P1', 'method' => 'Cash', 'amount' => 64000]],
+        ]]);
+        $this->assertSame(28.0, $this->stock('MEAT-001', 'CEN'));
+
+        // The owner re-cuts it to 3 kg: stock moves to match, the invoice number
+        // (reference) and id are kept, and the old line is replaced.
         $this->commit('choronai-sales-v1', fn ($rows) => collect($rows)->map(fn ($r) => $r['id'] === $sale
-            ? [...$r, 'items' => [['productId' => $beef->id, 'quantity' => 5, 'price' => 32000]]] : $r)->all(), 409);
+            ? [...$r, 'items' => [['productId' => $beef->id, 'quantity' => 3, 'price' => 32000]],
+                'grandTotal' => 96000, 'total' => 96000] : $r)->values()->all());
+
+        $this->assertSame(27.0, $this->stock('MEAT-001', 'CEN'));
+        $this->assertDatabaseHas('sales', ['id' => $sale, 'reference' => 'SALE/TEST/EDIT', 'grand_total' => 96000]);
+        $this->assertDatabaseHas('sale_lines', ['document_id' => $sale, 'quantity' => 3]);
+        $this->assertDatabaseMissing('sale_lines', ['document_id' => $sale, 'quantity' => 2]);
+    }
+
+    public function test_a_non_owner_cannot_re_cut_a_posted_sale(): void
+    {
+        $this->actingAsUser('admin021');
+        $beef = $this->product('MEAT-001');
+        $this->commit('choronai-registers-v1', fn ($rows) => [...$rows, ['id' => (string) Str::uuid(),
+            'status' => 'open', 'warehouse' => 'Central branch', 'cashInHand' => 0, 'openedAt' => now()->toIso8601String()]]);
+        $sale = (string) Str::uuid();
+        $this->commit('choronai-sales-v1', fn ($rows) => [...$rows, [
+            'id' => $sale, 'reference' => 'SALE/TEST/NOEDIT', 'date' => now()->toIso8601String(), 'warehouse' => 'Central branch',
+            'items' => [['productId' => $beef->id, 'quantity' => 2, 'price' => 32000]],
+            'paid' => 64000, 'paymentMethod' => 'Cash',
+            'payments' => [['id' => 'P1', 'method' => 'Cash', 'amount' => 64000]],
+        ]]);
+
+        // A cashier may not re-cut a sale (even their own): Return Sale instead.
+        $this->actingAsUser('cashier01');
+        $this->putJson("/api/v1/sales/{$sale}", [
+            'items' => [['product_id' => $beef->id, 'quantity' => 5, 'price' => 32000]],
+            'payment' => ['method' => 'Cash', 'tendered_riel' => 64000],
+        ])->assertStatus(403);
+        $this->assertDatabaseHas('sale_lines', ['document_id' => $sale, 'quantity' => 2]);
     }
 
     public function test_group_permissions_are_enforced_by_the_server(): void
