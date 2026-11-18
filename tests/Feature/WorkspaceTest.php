@@ -207,6 +207,27 @@ class WorkspaceTest extends ApiTestCase
         $this->assertDatabaseMissing('payments', ['sale_id' => $sale]);
     }
 
+    public function test_a_fractional_percentage_discount_is_rounded_and_saved(): void
+    {
+        // A percentage discount can work out fractional (e.g. 3.757% of 64000 =
+        // 2404.48). The browser used to send it as-is and the sale was stuck in
+        // "pending" with "The discount field must be an integer."
+        $this->actingAsUser('admin021');
+        $beef = $this->product('MEAT-001');
+        $this->commit('choronai-registers-v1', fn ($rows) => [...$rows, ['id' => (string) Str::uuid(),
+            'status' => 'open', 'warehouse' => 'Central branch', 'cashInHand' => 0, 'openedAt' => now()->toIso8601String()]]);
+        $sale = (string) Str::uuid();
+        $this->commit('choronai-sales-v1', fn ($rows) => [...$rows, [
+            'id' => $sale, 'reference' => 'SALE/TEST/3', 'date' => now()->toIso8601String(), 'warehouse' => 'Central branch',
+            'items' => [['productId' => $beef->id, 'quantity' => 2, 'price' => 32000]],
+            'discount' => 2404.48, 'orderTax' => 0.0, 'shipping' => 0,
+            'paid' => 61596, 'paymentMethod' => 'Cash',
+            'payments' => [['id' => 'SALE/TEST/3-1', 'method' => 'Cash', 'amount' => 61596]],
+        ]], 200);
+        // Rounded to a whole riel, and the sale is no longer stuck.
+        $this->assertDatabaseHas('sales', ['id' => $sale, 'discount' => 2404]);
+    }
+
     public function test_a_paid_sale_can_have_its_payment_method_corrected(): void
     {
         $this->actingAsUser('admin021');
