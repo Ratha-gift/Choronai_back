@@ -81,7 +81,7 @@ class FrontendWorkspaceController extends Controller
                 if (! $old) {
                     $this->call($request, 'POST', 'registers/open', [
                         'id' => $row['id'], 'warehouse_id' => $this->warehouse($row),
-                        'cash_in_hand' => $row['cash_in_hand'], 'open_note' => $row['open_note'] ?? null,
+                        'cash_in_hand' => (int) round($row['cash_in_hand'] ?? 0), 'open_note' => $row['open_note'] ?? null,
                         'opened_at' => $row['opened_at'],
                     ]);
                 }
@@ -151,7 +151,12 @@ class FrontendWorkspaceController extends Controller
                         // discount …); everyone else must use Return Sale instead.
                         abort_unless($request->user()->isOwner(), 409, 'A posted sale cannot be changed. Use Return Sale instead.');
                         $this->call($request, 'PUT', "sales/{$row['id']}", [
-                            ...collect($row)->only(['items', 'order_tax', 'discount', 'shipping', 'note'])->all(),
+                            ...collect($row)->only(['items', 'note'])->all(),
+                            // Money is whole riel; a percentage discount/tax can
+                            // arrive fractional, so round before the integer rules.
+                            'order_tax' => (int) round($row['order_tax'] ?? 0),
+                            'discount' => (int) round($row['discount'] ?? 0),
+                            'shipping' => (int) round($row['shipping'] ?? 0),
                             'customer_id' => $row['customer_id'] ?? Models\Customer::where('name', $row['customer'] ?? '')->value('id'),
                             'member_card_no' => $row['member_card'] ?? null,
                             'payment' => ['method' => $row['payment_method'] ?? 'Cash', 'tendered_riel' => (int) ($row['paid'] ?? 0)],
@@ -186,7 +191,12 @@ class FrontendWorkspaceController extends Controller
                     continue;
                 }
                 $this->call($request, 'POST', 'sales', [
-                    ...collect($row)->only(['id', 'reference', 'date', 'items', 'order_tax', 'discount', 'shipping', 'note'])->all(),
+                    ...collect($row)->only(['id', 'reference', 'date', 'items', 'note'])->all(),
+                    // Money is whole riel; a percentage discount/tax can arrive
+                    // fractional, so round before the integer validation rules.
+                    'order_tax' => (int) round($row['order_tax'] ?? 0),
+                    'discount' => (int) round($row['discount'] ?? 0),
+                    'shipping' => (int) round($row['shipping'] ?? 0),
                     'customer_id' => $row['customer_id'] ?? Models\Customer::where('name', $row['customer'] ?? '')->value('id'),
                     'member_card_no' => $row['member_card'] ?? null,
                     'payment' => ['method' => $row['payment_method'] ?? 'Cash', 'tendered_riel' => (int) ($row['paid'] ?? 0)],
