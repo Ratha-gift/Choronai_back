@@ -63,6 +63,39 @@ class WorkspaceTest extends ApiTestCase
         $this->assertContains('Sokha', array_column($fresh['data']['choronai-customers-v1'], 'name'));
     }
 
+    public function test_a_delta_commit_creates_a_sale_from_ops_only(): void
+    {
+        // Delta sync: the browser sends only the row it added (ops), not the
+        // whole sales list. The server rebuilds the collection and runs the
+        // same commands, so the sale and its stock move exactly as before.
+        $this->actingAsUser('admin021');
+        $beef = $this->product('MEAT-001');
+        $this->commit('choronai-registers-v1', fn ($rows) => [...$rows, ['id' => (string) Str::uuid(),
+            'status' => 'open', 'warehouse' => 'Central branch', 'cashInHand' => 0, 'openedAt' => now()->toIso8601String()]]);
+        $revision = $this->snapshot()['revision'];
+        $sale = (string) Str::uuid();
+        $this->postJson('/api/v1/frontend/workspace', [
+            'id' => (string) Str::uuid(), 'revision' => $revision,
+            'ops' => ['choronai-sales-v1' => ['rows' => ['upsert' => [[
+                'id' => $sale, 'reference' => 'SALE/OPS/1', 'date' => now()->toIso8601String(), 'warehouse' => 'Central branch',
+                'items' => [['productId' => $beef->id, 'quantity' => 1, 'price' => 32000]],
+                'paid' => 32000, 'paymentMethod' => 'Cash',
+                'payments' => [['id' => 'SALE/OPS/1-1', 'method' => 'Cash', 'amount' => 32000]],
+            ]], 'remove' => []]]],
+        ])->assertStatus(200);
+        $this->assertDatabaseHas('sales', ['id' => $sale, 'reference' => 'SALE/OPS/1', 'paid' => 32000]);
+        $this->assertSame(29.0, $this->stock('MEAT-001', 'CEN'));
+    }
+
+    public function test_a_commit_without_changes_or_ops_is_rejected(): void
+    {
+        $this->actingAsUser('admin021');
+        $revision = $this->snapshot()['revision'];
+        $this->postJson('/api/v1/frontend/workspace', [
+            'id' => (string) Str::uuid(), 'revision' => $revision,
+        ])->assertStatus(422);
+    }
+
     public function test_snapshot_does_not_query_once_per_document(): void
     {
         $this->actingAsUser('admin021');
