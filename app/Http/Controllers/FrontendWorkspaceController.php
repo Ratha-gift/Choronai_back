@@ -39,7 +39,8 @@ class FrontendWorkspaceController extends Controller
 
     public function commit(Request $request, FrontendWorkspace $workspace)
     {
-        $input = $request->validate(['id' => 'required|uuid', 'revision' => 'required|integer|min:0', 'changes' => 'required|array']);
+        $input = $request->validate(['id' => 'required|uuid', 'revision' => 'required|integer|min:0', 'changes' => 'sometimes|array', 'ops' => 'sometimes|array']);
+        abort_if(! isset($input['changes']) && ! isset($input['ops']), 422, 'A commit needs changes or ops.');
 
         return DB::transaction(function () use ($request, $workspace, $input) {
             $revision = DB::table('workspace_revisions')->where('id', 1)->lockForUpdate()->value('revision');
@@ -51,7 +52,15 @@ class FrontendWorkspaceController extends Controller
             }
             abort_unless((int) $revision === $input['revision'], 409, 'Another device changed the data. Reload and reconcile pending work.');
             $before = $workspace->snapshot($request)['data'];
-            $changes = $input['changes'];
+            // A delta commit ships only the rows it touched (ops); rebuild the
+            // whole collection from the server's current data so every command
+            // below runs unchanged. Old clients still send the full collection
+            // in `changes`, which is kept as-is.
+            $changes = $input['changes'] ?? [];
+            foreach ($input['ops'] ?? [] as $key => $ops) {
+                abort_unless(array_key_exists($key, $before), 422, 'Unknown workspace collection.');
+                $changes[$key] = $this->replay($before[$key], is_array($ops) ? $ops : []);
+            }
             foreach ($changes as $key => $value) {
                 abort_unless(array_key_exists($key, $before), 422, 'Unknown workspace collection.');
                 if (is_array($before[$key]) && array_is_list($before[$key]) && str_ends_with($key, '-v1')
@@ -264,6 +273,49 @@ class FrontendWorkspaceController extends Controller
                 $warehouse->update(['branch_id' => $branch['id'], 'type' => 'branch']);
             }
         }
+    }
+
+    /**
+     * Rebuilds a collection from the server's current value and a delta commit's
+     * ops — the mirror of the browser's replay() in sync.ts. Rows are upserted
+     * and removed by id; a settings object merges changed fields; a plain value
+     * is replaced.
+     */
+    private function replay($current, array $ops)
+    {
+        if (array_key_exists('rows', $ops)) {
+            $remove = array_map('strval', $ops['rows']['remove'] ?? []);
+            $rows = array_values(array_filter(
+                is_array($current) ? $current : [],
+                fn ($row) => ! in_array((string) ($row['id'] ?? ''), $remove, true)
+            ));
+            foreach ($ops['rows']['upsert'] ?? [] as $row) {
+                $at = null;
+                foreach ($rows as $index => $existing) {
+                    if ((string) ($existing['id'] ?? '') === (string) ($row['id'] ?? '')) {
+                        $at = $index;
+                        break;
+                    }
+                }
+                if ($at === null) {
+                    $rows[] = $row;
+                } else {
+                    $rows[$at] = $row;
+                }
+            }
+
+            return $rows;
+        }
+        if (array_key_exists('fields', $ops) || array_key_exists('removed', $ops)) {
+            $merged = array_merge(is_array($current) ? $current : [], $ops['fields'] ?? []);
+            foreach ($ops['removed'] ?? [] as $field) {
+                unset($merged[$field]);
+            }
+
+            return $merged;
+        }
+
+        return array_key_exists('value', $ops) ? $ops['value'] : $current;
     }
 
     private function delta(array $before, array $changes, string $key): array
